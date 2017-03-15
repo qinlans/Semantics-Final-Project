@@ -27,25 +27,47 @@ def build_dicts(corpus, unk_threshold=1, vector_word_list=None):
 
 
 
-    token_to_id = defaultdict(lambda: 0)
-    token_to_id['UNK'] = 0
-    token_to_id['<S>'] = 1
-    token_to_id['</S>'] = 2
 
-    id_to_token = ['UNK', '<S>', '</S>']
 
     if vector_word_list is None:
+        token_to_id = defaultdict(lambda: 0)
+        token_to_id['UNK'] = 0
+        token_to_id['<S>'] = 1
+        token_to_id['</S>'] = 2
+        token_sense_to_id = None
+
+        id_to_token = ['UNK', '<S>', '</S>']
         for word, count in word_counts.items():
             if count > unk_threshold and not word in token_to_id:
                 token_to_id[word] = len(token_to_id)
                 id_to_token.append(word)
     else:
-        for word, count in word_counts.items():
-            if count > unk_threshold and not word in token_to_id and word in vector_word_list:
-                token_to_id[word] = len(token_to_id)
-                id_to_token.append(word)
+        token_to_id = defaultdict(lambda: list())
+        token_to_id['UNK'] = [0]
+        token_to_id['<S>'] = [1]
+        token_to_id['</S>'] = [2]
 
-    return token_to_id, id_to_token
+        #Note : I need this dict to load the sense vectors into the right place.  Keeping original as well
+        token_sense_to_id = defaultdict(lambda: 0)
+        token_sense_to_id[('UNK',0)] = 0
+        token_sense_to_id[('<S>',0)] = 1
+        token_sense_to_id[('</S>',0)] = 2
+
+        #Included sense number for reference to the sense produced by Sense Retrofit
+        id_to_token = {0: ("UNK", 0), 1: ("<S>", 0), 2: ("</S>", 0)}
+
+        num_tokens = len(id_to_token)
+
+        for word, count in word_counts.items():
+            if count > unk_threshold and word not in token_to_id and word in vector_word_list.keys():
+                for sense in vector_word_list[word]:
+                    token_to_id[word].append(num_tokens)
+                    token_sense_to_id[(word, sense)] = num_tokens
+
+                    id_to_token[num_tokens] = (word, sense)
+                    num_tokens += 1
+
+    return token_to_id, id_to_token, token_sense_to_id
 
 # Creates batches where all source sentences are the same length
 def create_batches(sorted_dataset, max_batch_size):
@@ -73,10 +95,10 @@ class Attention:
         self.training = [(x, y) for (x, y) in zip(training_src, training_tgt)]
 
         vector_word_list = self.load_src_words(src_vectors_file)
-        self.src_token_to_id, self.src_id_to_token = build_dicts(training_src, unk_threshold, vector_word_list)
+        self.src_token_to_id, self.src_id_to_token, self.src_token_sense_to_id = build_dicts(training_src, unk_threshold, vector_word_list)
 
-        self.src_vocab_size = len(self.src_token_to_id)
-        self.tgt_token_to_id, self.tgt_id_to_token = build_dicts(training_tgt, unk_threshold)
+        self.src_vocab_size = len(self.src_id_to_token)
+        self.tgt_token_to_id, self.tgt_id_to_token, _ = build_dicts(training_tgt, unk_threshold)
         self.tgt_vocab_size = len(self.tgt_token_to_id)
         self.model_name = model_name
         self.max_batch_size = max_batch_size
@@ -90,6 +112,7 @@ class Attention:
         if src_vectors_file is not None:
             self.load_src_lookup_params(src_vectors_file, model)
         else:
+
             self.src_lookup = model.add_lookup_parameters((self.src_vocab_size, self.embed_size))
 
         self.tgt_lookup = model.add_lookup_parameters((self.tgt_vocab_size, self.embed_size))
@@ -116,31 +139,45 @@ class Attention:
         if src_vectors_file is None:
             return None
         else:
-            word_list = set()
+            word_list = defaultdict(lambda: list())
             with open(src_vectors_file) as vector_file:
+                first_line = True
                 for l in vector_file:
-                    try:
-                        space_delim = l.split()
-                        word = space_delim[0]
-                        word_list.add(word)
-                    except Exception as e:
-                        print("Error:{0}, {1}".format(e, l))
+                    if first_line:
+                        first_line = False
+                    else:
+                        try:
+                            space_delim = l.split()
+                            colon_delim = space_delim[0].split(":")
+                            word = colon_delim[0].split("%")[0]
+                            sense = colon_delim[0].split("%")[1]
+
+                            word_list[word].append(sense)
+                        except Exception as e:
+                            print("Error:{0}, {1}".format(e, l))
             return word_list
 
     def load_src_lookup_params(self, src_vectors_file, model):
         init_array = np.zeros((self.src_vocab_size, self.embed_size))
         count = 0
         with open(src_vectors_file) as vector_file:
+            first_line = True
             for l in vector_file:
-                try:
-                    space_delim = l.split()
-                    w_id = int(self.src_token_to_id[space_delim[0]])
-                    if w_id != 0:
-                        init_array[w_id, :] = np.asarray(space_delim[1:])
-                        count += 1
+                if first_line:
+                    first_line = False
+                else:
+                    try:
+                        space_delim = l.split()
+                        colon_delim = space_delim[0].split(":")
+                        word = colon_delim[0].split("%")[0]
+                        sense = colon_delim[0].split("%")[1]
+                        w_id = int(self.src_token_sense_to_id[(word, sense)])
+                        if w_id != 0:
+                            init_array[w_id, :] = np.asarray(space_delim[1:])
+                            count += 1
 
-                except Exception as e:
-                    print("Error:{0}, {1}".format(e, l))
+                    except Exception as e:
+                        print("Error:{0}, {1}".format(e, l))
 
 
         print("vectors set:{0} out of vocab size:{1}".format(count, self.src_vocab_size))
