@@ -19,11 +19,13 @@ def read_file(filename):
       dataset.append(sent)
   return dataset
 
-def build_dicts(corpus, unk_threshold=1):
+def build_dicts(corpus, unk_threshold=1, vector_word_list=None):
     word_counts = defaultdict(lambda: 0)
     for line in corpus:
         for word in line:
             word_counts[word] += 1
+
+
 
     token_to_id = defaultdict(lambda: 0)
     token_to_id['UNK'] = 0
@@ -32,10 +34,16 @@ def build_dicts(corpus, unk_threshold=1):
 
     id_to_token = ['UNK', '<S>', '</S>']
 
-    for word, count in word_counts.items():
-        if count > unk_threshold and not word in token_to_id:
-            token_to_id[word] = len(token_to_id)
-            id_to_token.append(word)
+    if vector_word_list is None:
+        for word, count in word_counts.items():
+            if count > unk_threshold and not word in token_to_id:
+                token_to_id[word] = len(token_to_id)
+                id_to_token.append(word)
+    else:
+        for word, count in word_counts.items():
+            if count > unk_threshold and not word in token_to_id and word in vector_word_list:
+                token_to_id[word] = len(token_to_id)
+                id_to_token.append(word)
 
     return token_to_id, id_to_token
 
@@ -59,11 +67,14 @@ def create_batches(sorted_dataset, max_batch_size):
 
 class Attention:
     def __init__(self, model, training_src, training_tgt, model_name, max_batch_size=32, num_epochs=30,
-        layers=1, embed_size=300, hidden_size=512, attention_size=128, max_len=50, unk_threshold=1,
-        builder=dy.LSTMBuilder):
+            layers=1, embed_size=300, hidden_size=512, attention_size=128, max_len=50, unk_threshold=1,
+            src_vectors_file=None, builder=dy.LSTMBuilder):
         self.model = model
         self.training = [(x, y) for (x, y) in zip(training_src, training_tgt)]
-        self.src_token_to_id, self.src_id_to_token = build_dicts(training_src, unk_threshold)
+
+        vector_word_list = self.load_src_words(src_vectors_file)
+        self.src_token_to_id, self.src_id_to_token = build_dicts(training_src, unk_threshold, vector_word_list)
+
         self.src_vocab_size = len(self.src_token_to_id)
         self.tgt_token_to_id, self.tgt_id_to_token = build_dicts(training_tgt, unk_threshold)
         self.tgt_vocab_size = len(self.tgt_token_to_id)
@@ -76,8 +87,11 @@ class Attention:
         self.attention_size = attention_size
         self.max_len = max_len
 
-        self.src_lookup = model.add_lookup_parameters((self.src_vocab_size, self.embed_size))
-        self.load_src_lookup_params()
+        if src_vectors_file is not None:
+            self.load_src_lookup_params(src_vectors_file, model)
+        else:
+            self.src_lookup = model.add_lookup_parameters((self.src_vocab_size, self.embed_size))
+
         self.tgt_lookup = model.add_lookup_parameters((self.tgt_vocab_size, self.embed_size))
         self.l2r_builder = builder(self.layers, self.embed_size, self.hidden_size, model)
         self.r2l_builder = builder(self.layers, self.embed_size, self.hidden_size, model)
@@ -98,10 +112,25 @@ class Attention:
         self.w2_att = model.add_parameters((self.attention_size))
 
 
-    def load_src_lookup_params(self):
+    def load_src_words(self, src_vectors_file):
+        if src_vectors_file is None:
+            return None
+        else:
+            word_list = set()
+            with open(src_vectors_file) as vector_file:
+                for l in vector_file:
+                    try:
+                        space_delim = l.split()
+                        word = space_delim[0]
+                        word_list.add(word)
+                    except Exception as e:
+                        print("Error:{0}, {1}".format(e, l))
+            return word_list
+
+    def load_src_lookup_params(self, src_vectors_file, model):
         init_array = np.zeros((self.src_vocab_size, self.embed_size))
         count = 0
-        with open("vector_file.txt") as vector_file:
+        with open(src_vectors_file) as vector_file:
             for l in vector_file:
                 try:
                     space_delim = l.split()
@@ -112,11 +141,11 @@ class Attention:
 
                 except Exception as e:
                     print("Error:{0}, {1}".format(e, l))
-        for i in range(self.src_vocab_size):
-            if not np.any(init_array[i, 0]) :
-                expr = dy.lookup(self.src_lookup, i)
-                init_array[i, :] = expr.npvalue()
+
+
         print("vectors set:{0} out of vocab size:{1}".format(count, self.src_vocab_size))
+        self.src_lookup = model.add_lookup_parameters((self.src_vocab_size, self.embed_size))
+
         self.src_lookup.init_from_array(init_array)
 
 
@@ -421,8 +450,12 @@ def main():
     test_src = read_file(sys.argv[5])
     #blind_src = read_file(sys.argv[6])
     model_name = sys.argv[6]
+
+    src_vector_file = None
+    if len(sys.argv) > 6:
+        src_vector_file = sys.argv[7]
     dev = [(x, y) for (x, y) in zip(dev_src, dev_tgt)]
-    attention = Attention(model, training_src, training_tgt, model_name)
+    attention = Attention(model, training_src, training_tgt, model_name, src_vectors_file=src_vector_file)
 
     if LOAD_MODEL:
         attention.load_model()
