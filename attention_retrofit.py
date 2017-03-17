@@ -295,14 +295,27 @@ class Attention:
         W1_att_f = dy.parameter(self.W1_att_f)
         w2_att = dy.parameter(self.w2_att)
 
-        sent_rev = list(reversed(sent))
+        # Sense-level attention
+        attended = []
+        c_t_sense = dy.vecInput(self.embed_size)
+        sense_start = dy.concatenate([dy.lookup(self.src_lookup), self.src_token_to_id['<S>'][0], c_t])
+        sense_state = self.sense_builder.initial_state().add_input(sense_state)
+        for cw in sent:
+            cw_sense_ids = self.src_token_to_id[cw]
+            cw_senses = [dy.lookup(self.src_lookup, sense_id) for sense_id in cw_sense_ids]
+            h_senses = dy.concatenate_cols(cw_sense_matrix)
+            h_m = sense_state.output()
+            c_t_sense = self.__sense_attention_mlp(h_senses, h_m)
+            attended.append(c_t_sense)
+
+        attended_rev = list(reversed(attended))
 
         # Bidirectional representations
         l2r_state = self.l2r_builder.initial_state()
         r2l_state = self.r2l_builder.initial_state()
         l2r_contexts = []
         r2l_contexts = []
-        for (cw_l2r, cw_r2l) in zip(sent, sent_rev):
+        for (cw_l2r, cw_r2l) in zip(attended, attended_rev):
             l2r_state = l2r_state.add_input(dy.lookup(self.src_lookup, self.src_token_to_id[cw_l2r]))
             r2l_state = r2l_state.add_input(dy.lookup(self.src_lookup, self.src_token_to_id[cw_r2l]))
             l2r_contexts.append(l2r_state.output())
@@ -337,6 +350,7 @@ class Attention:
 
         return ' '.join(trans_sentence[1:])
 
+    """
     def __step_batch(self, batch):
         dy.renew_cg()
 
@@ -413,6 +427,7 @@ class Attention:
             losses.append(mask_loss)
 
         return dy.sum_batches(dy.esum(losses)), num_words
+    """
 
     def train(self, dev, trainer, test, epoch_output=False, output_prefix='translated_test'):
         best_dev_perplexity = 9e9
@@ -449,6 +464,7 @@ class Attention:
             if epoch_output:
                 self.translate(test, 'translated_test_epoch_' + str(i))
 
+    """
     def train_batch(self, dev, trainer, test, epoch_output=False, output_prefix='translated_test'):
         self.training.sort(key=lambda t: len(t[0]), reverse=True)
         dev.sort(key=lambda t: len(t[0]), reverse=True)
@@ -490,6 +506,7 @@ class Attention:
 
             if epoch_output:
                 self.translate(test, output_prefix + '_epoch_' + str(i))
+    """
 
     def translate(self, src, output_filename):
         outfile = open(trans_out_dir + output_filename, 'wb')
