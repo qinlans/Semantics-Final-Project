@@ -2,9 +2,10 @@ from collections import defaultdict
 import dynet as dy
 import numpy as np
 import random
+import re
 import sys
 
-trans_out_dir = "./output/"
+trans_out_dir = './output/'
 
 LOAD_MODEL = False 
 TRAIN = True
@@ -24,10 +25,6 @@ def build_dicts(corpus, unk_threshold=1, vector_word_list=None):
     for line in corpus:
         for word in line:
             word_counts[word] += 1
-
-
-
-
 
     if vector_word_list is None:
         token_to_id = defaultdict(lambda: 0)
@@ -54,12 +51,12 @@ def build_dicts(corpus, unk_threshold=1, vector_word_list=None):
         token_sense_to_id[('</S>',0)] = 2
 
         #Included sense number for reference to the sense produced by Sense Retrofit
-        id_to_token = {0: ("UNK", 0), 1: ("<S>", 0), 2: ("</S>", 0)}
+        id_to_token = {0: ('UNK', 0), 1: ('<S>', 0), 2: ('</S>', 0)}
 
         num_tokens = len(id_to_token)
 
         for word, count in word_counts.items():
-            if count > unk_threshold and word not in token_to_id and word in vector_word_list.keys():
+            if count > unk_threshold and word not in token_to_id and word in vector_word_list:
                 for sense in vector_word_list[word]:
                     token_to_id[word].append(num_tokens)
                     token_sense_to_id[(word, sense)] = num_tokens
@@ -89,12 +86,13 @@ def create_batches(sorted_dataset, max_batch_size):
 
 class Attention:
     def __init__(self, model, training_src, training_tgt, model_name, max_batch_size=32, num_epochs=30,
-            layers=1, embed_size=300, hidden_size=512, attention_size=128, max_len=50, unk_threshold=1,
-            src_vectors_file=None, builder=dy.LSTMBuilder):
+            layers=1, embed_size=300, hidden_size=512, word_attention_size=128, sense_attention_size=32,
+            max_len=50, unk_threshold=1, src_vectors_file=None, builder=dy.LSTMBuilder):
         self.model = model
         self.training = [(x, y) for (x, y) in zip(training_src, training_tgt)]
 
         vector_word_list = self.load_src_words(src_vectors_file)
+        print ('Building dictionaries for converting from ids to tokens and vice versa')
         self.src_token_to_id, self.src_id_to_token, self.src_token_sense_to_id = build_dicts(training_src, unk_threshold, vector_word_list)
 
         self.src_vocab_size = len(self.src_id_to_token)
@@ -106,20 +104,21 @@ class Attention:
         self.layers = layers
         self.embed_size = embed_size
         self.hidden_size = hidden_size
-        self.attention_size = attention_size
+        self.word_attention_size = word_attention_size
+        self.sense_attention_size = sense_attention_size
         self.max_len = max_len
 
         if src_vectors_file is not None:
             self.load_src_lookup_params(src_vectors_file, model)
         else:
-
             self.src_lookup = model.add_lookup_parameters((self.src_vocab_size, self.embed_size))
 
         self.tgt_lookup = model.add_lookup_parameters((self.tgt_vocab_size, self.embed_size))
         self.l2r_builder = builder(self.layers, self.embed_size, self.hidden_size, model)
         self.r2l_builder = builder(self.layers, self.embed_size, self.hidden_size, model)
 
-        self.dec_builder = builder(self.layers, self.hidden_size*2+self.embed_size, self.hidden_size, model)
+        self.sense_builder = builder(self.layers, self.hidden_size+self.embed_size, self.hidden_size, model)
+        self.word_dec_builder = builder(self.layers, self.hidden_size*2+self.embed_size, self.hidden_size, model)
 
         self.W_s = model.add_parameters((self.hidden_size, self.hidden_size*2))
         self.b_s = model.add_parameters((self.hidden_size))
@@ -130,16 +129,21 @@ class Attention:
         self.W_y = model.add_parameters((self.tgt_vocab_size, self.hidden_size))
         self.b_y = model.add_parameters((self.tgt_vocab_size))
 
-        self.W1_att_f = model.add_parameters((self.attention_size, self.hidden_size * 2))
-        self.W1_att_e = model.add_parameters((self.attention_size, self.hidden_size))
-        self.w2_att = model.add_parameters((self.attention_size))
+        self.W1_att_f = model.add_parameters((self.word_attention_size, self.hidden_size * 2))
+        self.W1_att_e = model.add_parameters((self.word_attention_size, self.hidden_size))
+        self.w2_att = model.add_parameters((self.word_attention_size))
 
+        self.W1_att_senses = model.add_parameters((self.sense_attention_size, self.embed_size))
+        self.W1_att_m = model.add_parameters((self.sense_attention_size, self.embed_size))
+        self.w2_att_s = model.add_parameters((self.sense_attention_size))
 
     def load_src_words(self, src_vectors_file):
+        print('Reading source vectors from file ' + src_vectors_file)
         if src_vectors_file is None:
             return None
         else:
             word_list = defaultdict(lambda: list())
+            count = 0
             with open(src_vectors_file) as vector_file:
                 first_line = True
                 for l in vector_file:
@@ -148,16 +152,17 @@ class Attention:
                     else:
                         try:
                             space_delim = l.split()
-                            colon_delim = space_delim[0].split(":")
-                            word = colon_delim[0].split("%")[0]
-                            sense = colon_delim[0].split("%")[1]
-
+                            word = space_delim[0].split('|')[0]
+                            sense = space_delim[0].split('|')[1].strip(':')
                             word_list[word].append(sense)
                         except Exception as e:
-                            print("Error:{0}, {1}".format(e, l))
+                            print('Error:{0}, {1}'.format(e, l))
+                    count += 1
+
             return word_list
 
     def load_src_lookup_params(self, src_vectors_file, model):
+        print('Loading source vectors as lookup parameters')
         init_array = np.zeros((self.src_vocab_size, self.embed_size))
         count = 0
         with open(src_vectors_file) as vector_file:
@@ -168,33 +173,40 @@ class Attention:
                 else:
                     try:
                         space_delim = l.split()
-                        colon_delim = space_delim[0].split(":")
-                        word = colon_delim[0].split("%")[0]
-                        sense = colon_delim[0].split("%")[1]
+                        word = space_delim[0].split('|')[0]
+                        sense = space_delim[0].split('|')[1].strip(':')
                         w_id = int(self.src_token_sense_to_id[(word, sense)])
                         if w_id != 0:
                             init_array[w_id, :] = np.asarray(space_delim[1:])
                             count += 1
 
                     except Exception as e:
-                        print("Error:{0}, {1}".format(e, l))
+                        print('Error:{0}, {1}'.format(e, l))
 
 
-        print("vectors set:{0} out of vocab size:{1}".format(count, self.src_vocab_size))
+        print('Set: {0} vectors out of vocab size: {1}'.format(count, self.src_vocab_size))
         self.src_lookup = model.add_lookup_parameters((self.src_vocab_size, self.embed_size))
 
         self.src_lookup.init_from_array(init_array)
 
+    def save_model(self):
+        self.model.save(self.model_name)
 
     def load_model(self):
-        (self.src_lookup, self.tgt_lookup, self.l2r_builder, self.r2l_builder,
-         self.dec_builder, self.W_m, self.b_m, self.W_s, self.b_s,
-         self.W_y, self.b_y, self.W1_att_f, self.W1_att_e,
-         self.w2_att) = self.model.load(self.model_name)
-        
+        self.model.load(self.model_name)
 
-    # Calculates the context vector using a MLP
-    def __attention_mlp(self, h_fs_matrix, h_e, fixed_attentional_component):
+    # Calculates the generalized vector over senses using a MLP
+    def __sense_attention_mlp(self, h_senses, h_m):
+        W1_att_senses = dy.parameter(self.W1_att_senses)
+        W1_att_m = dy.parameter(self.W1_att_m)
+        w2_att_s = dy.parameter(self.w2_att_s)
+        a_t = dy.transpose(dy.tanh(dy.colwise_add(W1_att_senses * h_senses, W1_att_m * h_m))) * w2_att_s
+        alignment = dy.softmax(a_t)
+        c_t = h_sense * alignment
+        return c_t
+
+    # Calculates the context vector for words using a MLP
+    def __word_attention_mlp(self, h_fs_matrix, h_e, fixed_attentional_component):
         W1_att_e = dy.parameter(self.W1_att_e)
         w2_att = dy.parameter(self.w2_att)
         a_t = dy.transpose(dy.tanh(dy.colwise_add(fixed_attentional_component, W1_att_e * h_e))) * w2_att
@@ -217,17 +229,30 @@ class Attention:
         w2_att = dy.parameter(self.w2_att)
 
         src_sent, tgt_sent = instance
-        src_sent_rev = list(reversed(src_sent))
 
+        # Sense-level attention
+        attended = []
+        c_t_sense = dy.vecInput(self.embed_size)
+        sense_start = dy.concatenate([dy.lookup(self.src_lookup), self.src_token_to_id['<S>'][0], c_t])
+        sense_state = self.sense_builder.initial_state().add_input(sense_state)
+        for cw in src_sent:
+            cw_sense_ids = self.src_token_to_id[cw]
+            cw_senses = [dy.lookup(self.src_lookup, sense_id) for sense_id in cw_sense_ids]
+            h_senses = dy.concatenate_cols(cw_sense_matrix)
+            h_m = sense_state.output()
+            c_t_sense = self.__sense_attention_mlp(h_senses, h_m)
+            attended.append(c_t_sense)
+
+        attended_rev = list(reversed(attended))
         # Bidirectional representations
         l2r_state = self.l2r_builder.initial_state()
         r2l_state = self.r2l_builder.initial_state()
         l2r_contexts = []
         r2l_contexts = []
-        for (cw_l2r, cw_r2l) in zip(src_sent, src_sent_rev):
+        for (cw_l2r, cw_r2l) in zip(attended, attended_rev):
             l2r_state = l2r_state.add_input(dy.lookup(self.src_lookup, self.src_token_to_id[cw_l2r]))
-            l2r_contexts.append(l2r_state.output())
             r2l_state = r2l_state.add_input(dy.lookup(self.src_lookup, self.src_token_to_id[cw_r2l]))
+            l2r_contexts.append(l2r_state.output())
             r2l_contexts.append(r2l_state.output())
         r2l_contexts.reverse()
 
@@ -243,13 +268,13 @@ class Attention:
         # Decoder
         c_t = dy.vecInput(self.hidden_size * 2)
         start_state = dy.affine_transform([b_s, W_s, h_fs[-1]])
-        dec_state = self.dec_builder.initial_state().set_s([start_state, dy.tanh(start_state)])
+        dec_state = self.word_dec_builder.initial_state().set_s([start_state, dy.tanh(start_state)])
         for (cw, nw) in zip(tgt_sent, tgt_sent[1:]):
             embed_t = dy.lookup(self.tgt_lookup, self.tgt_token_to_id[cw])
             x_t = dy.concatenate([embed_t, c_t])
             dec_state = dec_state.add_input(x_t)
             h_e = dec_state.output()
-            c_t = self.__attention_mlp(h_fs_matrix, h_e, fixed_attentional_component)
+            c_t = self.__word_attention_mlp(h_fs_matrix, h_e, fixed_attentional_component)
             m_t = dy.tanh(dy.affine_transform([b_m, W_m, dy.concatenate([h_e, c_t])]))
             y_star = dy.affine_transform([b_y, W_y, m_t])
             loss = dy.pickneglogsoftmax(y_star, self.tgt_token_to_id[nw])
@@ -295,13 +320,13 @@ class Attention:
         cw = trans_sentence[-1]
         c_t = dy.vecInput(self.hidden_size * 2)
         start_state = dy.affine_transform([b_s, W_s, h_fs[-1]])
-        dec_state = self.dec_builder.initial_state().set_s([start_state, dy.tanh(start_state)])
+        dec_state = self.word_dec_builder.initial_state().set_s([start_state, dy.tanh(start_state)])
         while len(trans_sentence) < self.max_len:
             embed_t = dy.lookup(self.tgt_lookup, self.tgt_token_to_id[cw])
             x_t = dy.concatenate([embed_t, c_t])
             dec_state = dec_state.add_input(x_t)
             h_e = dec_state.output()
-            c_t = self.__attention_mlp(h_fs_matrix, h_e, fixed_attentional_component)
+            c_t = self.__word_attention_mlp(h_fs_matrix, h_e, fixed_attentional_component)
             m_t = dy.tanh(dy.affine_transform([b_m, W_m, dy.concatenate([h_e, c_t])]))
             y_star = dy.affine_transform([b_y, W_y, m_t])
             p = dy.softmax(y_star)
@@ -372,13 +397,13 @@ class Attention:
 
         c_t = dy.vecInput(self.hidden_size * 2)
         start_state = dy.affine_transform([b_s, W_s, h_fs[-1]])
-        dec_state = self.dec_builder.initial_state().set_s([start_state, dy.tanh(start_state)])
+        dec_state = self.word_dec_builder.initial_state().set_s([start_state, dy.tanh(start_state)])
         for i, (cws, nws, mask) in enumerate(zip(tgt_cws, tgt_cws[1:], masks)):
             embed_t = dy.lookup_batch(self.tgt_lookup, cws)
             x_t = dy.concatenate([embed_t, c_t])
             dec_state = dec_state.add_input(x_t)
             h_e = dec_state.output()
-            c_t = self.__attention_mlp(h_fs_matrix, h_e, fixed_attentional_component)
+            c_t = self.__word_attention_mlp(h_fs_matrix, h_e, fixed_attentional_component)
             m_t = dy.tanh(dy.affine_transform([b_m, W_m, dy.concatenate([h_e, c_t])]))
             y_star = dy.affine_transform([b_y, W_y, m_t])
             loss = dy.pickneglogsoftmax_batch(y_star, nws)
@@ -389,7 +414,7 @@ class Attention:
 
         return dy.sum_batches(dy.esum(losses)), num_words
 
-    def train(self, dev, trainer, test, epoch_output=False):
+    def train(self, dev, trainer, test, epoch_output=False, output_prefix='translated_test'):
         best_dev_perplexity = 9e9
         for i in range(self.num_epochs):
             total_loss, total_words = 0, 0
@@ -419,15 +444,12 @@ class Attention:
 
             if dev_perplexity < best_dev_perplexity:
                 best_dev_perplexity = dev_perplexity
-                self.model.save(self.model_name, [self.src_lookup, self.tgt_lookup,
-                    self.l2r_builder, self.r2l_builder, self.dec_builder, self.W_m, self.b_m,
-                    self.W_s, self.b_s, self.W_y, self.b_y, self.W1_att_f,
-                    self.W1_att_e, self.w2_att])
+                self.save_model()
 
             if epoch_output:
                 self.translate(test, 'translated_test_epoch_' + str(i))
 
-    def train_batch(self, dev, trainer, test, epoch_output=False):
+    def train_batch(self, dev, trainer, test, epoch_output=False, output_prefix='translated_test'):
         self.training.sort(key=lambda t: len(t[0]), reverse=True)
         dev.sort(key=lambda t: len(t[0]), reverse=True)
         training_order = create_batches(self.training, self.max_batch_size) 
@@ -464,12 +486,10 @@ class Attention:
 
             if dev_perplexity < best_dev_perplexity:
                 best_dev_perplexity = dev_perplexity
-                self.model.save(self.model_name, [self.src_lookup, self.tgt_lookup,
-                    self.l2r_builder, self.r2l_builder, self.dec_builder, self.W_m, self.b_m,
-                    self.W_y, self.b_y, self.W1_att_f, self.W1_att_e, self.w2_att])
+                self.save_model()
 
             if epoch_output:
-                self.translate(test, 'translated_test_epoch_' + str(i))
+                self.translate(test, output_prefix + '_epoch_' + str(i))
 
     def translate(self, src, output_filename):
         outfile = open(trans_out_dir + output_filename, 'wb')
@@ -485,21 +505,22 @@ def main():
     dev_src = read_file(sys.argv[3])
     dev_tgt = read_file(sys.argv[4])
     test_src = read_file(sys.argv[5])
-    #blind_src = read_file(sys.argv[6])
     model_name = sys.argv[6]
 
     src_vector_file = None
     if len(sys.argv) > 6:
         src_vector_file = sys.argv[7]
     dev = [(x, y) for (x, y) in zip(dev_src, dev_tgt)]
-    attention = Attention(model, training_src, training_tgt, model_name, src_vectors_file=src_vector_file)
+    attention = Attention(model, training_src, training_tgt, model_name,
+        src_vectors_file=src_vector_file)
+
+    out_language = sys.argv[1].split('.')[1]
 
     if LOAD_MODEL:
         attention.load_model()
     if TRAIN:
-        attention.train_batch(dev, trainer, test_src, True)
+        attention.train(dev, trainer, test_src, True, 'test.' + out_language)
 
-    attention.translate(test_src, 'test.primary.en')
-    #attention.translate(blind_src, 'blind.primary.en')
+    attention.translate(test_src, 'test.' + out_language)
 
 if __name__ == '__main__': main()
