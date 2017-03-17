@@ -295,8 +295,8 @@ class Attention:
         l2r_contexts = []
         r2l_contexts = []
         for (cw_l2r, cw_r2l) in zip(attended, attended_rev):
-            l2r_state = l2r_state.add_input(dy.lookup(self.src_lookup, self.src_token_to_id[cw_l2r]))
-            r2l_state = r2l_state.add_input(dy.lookup(self.src_lookup, self.src_token_to_id[cw_r2l]))
+            l2r_state = l2r_state.add_input(cw_l2r)
+            r2l_state = r2l_state.add_input(cw_r2l)
             l2r_contexts.append(l2r_state.output())
             r2l_contexts.append(r2l_state.output())
         r2l_contexts.reverse()
@@ -313,7 +313,7 @@ class Attention:
         # Decoder
         c_t = dy.vecInput(self.hidden_size * 2)
         start_state = dy.affine_transform([b_s, W_s, h_fs[-1]])
-        dec_state = self.word_dec_builder.initial_state().set_s([start_state, dy.tanh(start_state)])
+        dec_state = self.word_dec_builder.initial_state().set_s([start_state])
         for (cw, nw) in zip(tgt_sent, tgt_sent[1:]):
             embed_t = dy.lookup(self.tgt_lookup, self.tgt_token_to_id[cw])
             x_t = dy.concatenate([embed_t, c_t])
@@ -362,8 +362,8 @@ class Attention:
         l2r_contexts = []
         r2l_contexts = []
         for (cw_l2r, cw_r2l) in zip(attended, attended_rev):
-            l2r_state = l2r_state.add_input(dy.lookup(self.src_lookup, self.src_token_to_id[cw_l2r]))
-            r2l_state = r2l_state.add_input(dy.lookup(self.src_lookup, self.src_token_to_id[cw_r2l]))
+            l2r_state = l2r_state.add_input(cw_l2r)
+            r2l_state = r2l_state.add_input(cw_r2l)
             l2r_contexts.append(l2r_state.output())
             r2l_contexts.append(r2l_state.output())
         r2l_contexts.reverse()
@@ -379,7 +379,7 @@ class Attention:
         cw = trans_sentence[-1]
         c_t = dy.vecInput(self.hidden_size * 2)
         start_state = dy.affine_transform([b_s, W_s, h_fs[-1]])
-        dec_state = self.word_dec_builder.initial_state().set_s([start_state, dy.tanh(start_state)])
+        dec_state = self.word_dec_builder.initial_state().set_s([start_state])
         while len(trans_sentence) < self.max_len:
             embed_t = dy.lookup(self.tgt_lookup, self.tgt_token_to_id[cw])
             x_t = dy.concatenate([embed_t, c_t])
