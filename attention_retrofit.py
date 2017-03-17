@@ -56,7 +56,7 @@ def build_dicts(corpus, unk_threshold=1, vector_word_list=None):
         num_tokens = len(id_to_token)
 
         for word, count in word_counts.items():
-            if count > unk_threshold and word not in token_to_id and word in vector_word_list:
+            if count > unk_threshold and word not in token_to_id: #and word in vector_word_list:
                 for sense in vector_word_list[word]:
                     token_to_id[word].append(num_tokens)
                     token_sense_to_id[(word, sense)] = num_tokens
@@ -161,7 +161,7 @@ class Attention:
 
             return word_list
 
-    def load_src_lookup_params(self, src_vectors_file, model):
+    def load_src_lookup_params_only_vectors(self, src_vectors_file, model):
         print('Loading source vectors as lookup parameters')
         init_array = np.zeros((self.src_vocab_size, self.embed_size))
         count = 0
@@ -183,6 +183,40 @@ class Attention:
                     except Exception as e:
                         print('Error:{0}, {1}'.format(e, l))
 
+
+        print('Set: {0} vectors out of vocab size: {1}'.format(count, self.src_vocab_size))
+        self.src_lookup = model.add_lookup_parameters((self.src_vocab_size, self.embed_size))
+
+        self.src_lookup.init_from_array(init_array)
+
+    def load_src_lookup_params(self, src_vectors_file, model):
+        print('Loading source vectors as lookup parameters')
+        init_array = np.zeros((self.src_vocab_size, self.embed_size))
+        count = 0
+        with open(src_vectors_file) as vector_file:
+            first_line = True
+            for l in vector_file:
+                if first_line:
+                    first_line = False
+                else:
+                    try:
+                        space_delim = l.split()
+                        word = space_delim[0].split('|')[0]
+                        sense = space_delim[0].split('|')[1].strip(':')
+                        w_id = int(self.src_token_sense_to_id[(word, sense)])
+                        if w_id != 0:
+                            init_array[w_id, :] = np.asarray(space_delim[1:])
+                            count += 1
+                        else:
+                            init_array[w_id, :] = np.asarray(space_delim[1:])
+                            count += 1
+
+                    except Exception as e:
+                        print('Error:{0}, {1}'.format(e, l))
+        for i in range(self.src_vocab_size):
+            if not np.any(init_array[i, :]) :
+                expr = dy.lookup(self.src_lookup, i)
+                init_array[i, :] = expr.npvalue()
 
         print('Set: {0} vectors out of vocab size: {1}'.format(count, self.src_vocab_size))
         self.src_lookup = model.add_lookup_parameters((self.src_vocab_size, self.embed_size))
@@ -237,7 +271,7 @@ class Attention:
         sense_state = self.sense_builder.initial_state().add_input(sense_start)
         for cw in src_sent:
             cw_sense_ids = self.src_token_to_id[cw]
-            print cw, cw_sense_ids
+            print (cw, cw_sense_ids)
             cw_senses = [dy.lookup(self.src_lookup, sense_id) for sense_id in cw_sense_ids]
             h_senses = dy.concatenate_cols(cw_senses)
             h_m = sense_state.output()
