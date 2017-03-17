@@ -39,7 +39,7 @@ def build_dicts(corpus, unk_threshold=1, vector_word_list=None):
                 token_to_id[word] = len(token_to_id)
                 id_to_token.append(word)
     else:
-        token_to_id = defaultdict(lambda: list())
+        token_to_id = defaultdict(lambda: [0])
         token_to_id['UNK'] = [0]
         token_to_id['<S>'] = [1]
         token_to_id['</S>'] = [2]
@@ -56,6 +56,7 @@ def build_dicts(corpus, unk_threshold=1, vector_word_list=None):
         num_tokens = len(id_to_token)
 
         for word, count in word_counts.items():
+            token_to_id[word] = []
             if count > unk_threshold and word not in token_to_id and word in vector_word_list:
                 for sense in vector_word_list[word]:
                     token_to_id[word].append(num_tokens)
@@ -69,6 +70,7 @@ def build_dicts(corpus, unk_threshold=1, vector_word_list=None):
 
                 id_to_token[num_tokens] = (word, 0)
                 num_tokens += 1
+
 
     return token_to_id, id_to_token, token_sense_to_id
 
@@ -219,12 +221,11 @@ class Attention:
                     except Exception as e:
                         print('Error:{0}, {1}'.format(e, l))
         for i in range(self.src_vocab_size):
-            if not np.any(init_array[i, :]) :
+            if not np.any(init_array[i, :]):
                 expr = dy.lookup(self.src_lookup, i)
                 init_array[i, :] = expr.npvalue()
 
         print('Set: {0} vectors out of vocab size: {1}'.format(count, self.src_vocab_size))
-        self.src_lookup = model.add_lookup_parameters((self.src_vocab_size, self.embed_size))
 
         self.src_lookup.init_from_array(init_array)
 
