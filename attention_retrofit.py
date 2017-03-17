@@ -280,7 +280,6 @@ class Attention:
         sense_state = self.sense_builder.initial_state().add_input(sense_start)
         for cw in src_sent:
             cw_sense_ids = self.src_token_to_id[cw]
-            print (cw, cw_sense_ids)
             cw_senses = [dy.lookup(self.src_lookup, sense_id) for sense_id in cw_sense_ids]
             h_senses = dy.concatenate_cols(cw_senses)
             h_m = sense_state.output()
@@ -289,6 +288,7 @@ class Attention:
             attended.append(c_t_sense)
 
         attended_rev = list(reversed(attended))
+
         # Bidirectional representations
         l2r_state = self.l2r_builder.initial_state()
         r2l_state = self.r2l_builder.initial_state()
@@ -313,7 +313,7 @@ class Attention:
         # Decoder
         c_t = dy.vecInput(self.hidden_size * 2)
         start_state = dy.affine_transform([b_s, W_s, h_fs[-1]])
-        dec_state = self.word_dec_builder.initial_state().set_s([start_state])
+        dec_state = self.word_dec_builder.initial_state().set_s([start_state, dy.tanh(start_state)])
         for (cw, nw) in zip(tgt_sent, tgt_sent[1:]):
             embed_t = dy.lookup(self.tgt_lookup, self.tgt_token_to_id[cw])
             x_t = dy.concatenate([embed_t, c_t])
@@ -379,7 +379,7 @@ class Attention:
         cw = trans_sentence[-1]
         c_t = dy.vecInput(self.hidden_size * 2)
         start_state = dy.affine_transform([b_s, W_s, h_fs[-1]])
-        dec_state = self.word_dec_builder.initial_state().set_s([start_state])
+        dec_state = self.word_dec_builder.initial_state().set_s([start_state, dy.tanh(start_state)])
         while len(trans_sentence) < self.max_len:
             embed_t = dy.lookup(self.tgt_lookup, self.tgt_token_to_id[cw])
             x_t = dy.concatenate([embed_t, c_t])
@@ -508,7 +508,7 @@ class Attention:
                 self.save_model()
 
             if epoch_output:
-                self.translate(test, 'translated_test_epoch_' + str(i))
+                self.translate(test, output_prefix + '_epoch_' + str(i))
 
     """
     def train_batch(self, dev, trainer, test, epoch_output=False, output_prefix='translated_test'):
