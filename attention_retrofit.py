@@ -64,6 +64,7 @@ def build_dicts(corpus, unk_threshold=1, vector_word_list=None):
                     id_to_token[num_tokens] = (word, sense)
                     num_tokens += 1
             elif count > unk_threshold and word not in token_to_id and word not in vector_word_list:
+                token_to_id[word].append(num_tokens)
                 token_sense_to_id[(word, 0)] = num_tokens
 
                 id_to_token[num_tokens] = (word, 0)
