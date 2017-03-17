@@ -207,9 +207,6 @@ class Attention:
                         if w_id != 0:
                             init_array[w_id, :] = np.asarray(space_delim[1:])
                             count += 1
-                        else:
-                            init_array[w_id, :] = np.asarray(space_delim[1:])
-                            count += 1
 
                     except Exception as e:
                         print('Error:{0}, {1}'.format(e, l))
