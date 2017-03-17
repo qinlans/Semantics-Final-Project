@@ -95,12 +95,12 @@ class Attention:
         self.W1_att_f = model.add_parameters((self.attention_size, self.hidden_size * 2))
         self.W1_att_e = model.add_parameters((self.attention_size, self.hidden_size))
         self.w2_att = model.add_parameters((self.attention_size))
-
-    def load_model(self):
-        self.model.load(self.model_name)
         
     def save_model(self):
         self.model.save(self.model_name)
+
+    def load_model(self):
+        self.model.load(self.model_name)
 
     # Calculates the context vector using a MLP
     def __attention_mlp(self, h_fs_matrix, h_e, fixed_attentional_component):
