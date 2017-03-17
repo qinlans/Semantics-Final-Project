@@ -56,13 +56,18 @@ def build_dicts(corpus, unk_threshold=1, vector_word_list=None):
         num_tokens = len(id_to_token)
 
         for word, count in word_counts.items():
-            if count > unk_threshold and word not in token_to_id: #and word in vector_word_list:
+            if count > unk_threshold and word not in token_to_id and word in vector_word_list:
                 for sense in vector_word_list[word]:
                     token_to_id[word].append(num_tokens)
                     token_sense_to_id[(word, sense)] = num_tokens
 
                     id_to_token[num_tokens] = (word, sense)
                     num_tokens += 1
+            elif count > unk_threshold and word not in token_to_id and word not in vector_word_list:
+                token_sense_to_id[(word, 0)] = num_tokens
+
+                id_to_token[num_tokens] = (word, 0)
+                num_tokens += 1
 
     return token_to_id, id_to_token, token_sense_to_id
 
@@ -190,6 +195,8 @@ class Attention:
         self.src_lookup.init_from_array(init_array)
 
     def load_src_lookup_params(self, src_vectors_file, model):
+        self.src_lookup = model.add_lookup_parameters((self.src_vocab_size, self.embed_size))
+
         print('Loading source vectors as lookup parameters')
         init_array = np.zeros((self.src_vocab_size, self.embed_size))
         count = 0
