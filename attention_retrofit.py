@@ -117,7 +117,7 @@ class Attention:
         self.l2r_builder = builder(self.layers, self.embed_size, self.hidden_size, model)
         self.r2l_builder = builder(self.layers, self.embed_size, self.hidden_size, model)
 
-        self.sense_builder = builder(self.layers, self.hidden_size+self.embed_size, self.hidden_size, model)
+        self.sense_builder = builder(self.layers, self.embed_size*2, self.hidden_size, model)
         self.word_dec_builder = builder(self.layers, self.hidden_size*2+self.embed_size, self.hidden_size, model)
 
         self.W_s = model.add_parameters((self.hidden_size, self.hidden_size*2))
@@ -134,7 +134,7 @@ class Attention:
         self.w2_att = model.add_parameters((self.word_attention_size))
 
         self.W1_att_senses = model.add_parameters((self.sense_attention_size, self.embed_size))
-        self.W1_att_m = model.add_parameters((self.sense_attention_size, self.embed_size))
+        self.W1_att_m = model.add_parameters((self.sense_attention_size, self.hidden_size))
         self.w2_att_s = model.add_parameters((self.sense_attention_size))
 
     def load_src_words(self, src_vectors_file):
@@ -202,7 +202,7 @@ class Attention:
         w2_att_s = dy.parameter(self.w2_att_s)
         a_t = dy.transpose(dy.tanh(dy.colwise_add(W1_att_senses * h_senses, W1_att_m * h_m))) * w2_att_s
         alignment = dy.softmax(a_t)
-        c_t = h_sense * alignment
+        c_t = h_senses * alignment
         return c_t
 
     # Calculates the context vector for words using a MLP
@@ -233,14 +233,16 @@ class Attention:
         # Sense-level attention
         attended = []
         c_t_sense = dy.vecInput(self.embed_size)
-        sense_start = dy.concatenate([dy.lookup(self.src_lookup), self.src_token_to_id['<S>'][0], c_t])
-        sense_state = self.sense_builder.initial_state().add_input(sense_state)
+        sense_start = dy.concatenate([dy.lookup(self.src_lookup, self.src_token_to_id['<S>'][0]), dy.tanh(c_t_sense)])
+        sense_state = self.sense_builder.initial_state().add_input(sense_start)
         for cw in src_sent:
             cw_sense_ids = self.src_token_to_id[cw]
+            print cw, cw_sense_ids
             cw_senses = [dy.lookup(self.src_lookup, sense_id) for sense_id in cw_sense_ids]
-            h_senses = dy.concatenate_cols(cw_sense_matrix)
+            h_senses = dy.concatenate_cols(cw_senses)
             h_m = sense_state.output()
             c_t_sense = self.__sense_attention_mlp(h_senses, h_m)
+            sense_state = sense_state.add_input(dy.concatenate([c_t_sense, dy.tanh(c_t_sense)]))
             attended.append(c_t_sense)
 
         attended_rev = list(reversed(attended))
@@ -298,14 +300,15 @@ class Attention:
         # Sense-level attention
         attended = []
         c_t_sense = dy.vecInput(self.embed_size)
-        sense_start = dy.concatenate([dy.lookup(self.src_lookup), self.src_token_to_id['<S>'][0], c_t])
-        sense_state = self.sense_builder.initial_state().add_input(sense_state)
+        sense_start = dy.concatenate([dy.lookup(self.src_lookup, self.src_token_to_id['<S>'][0]), c_t_sense])
+        sense_state = self.sense_builder.initial_state().add_input(sense_start)
         for cw in sent:
             cw_sense_ids = self.src_token_to_id[cw]
             cw_senses = [dy.lookup(self.src_lookup, sense_id) for sense_id in cw_sense_ids]
-            h_senses = dy.concatenate_cols(cw_sense_matrix)
+            h_senses = dy.concatenate_cols(cw_senses)
             h_m = sense_state.output()
             c_t_sense = self.__sense_attention_mlp(h_senses, h_m)
+            sense_state = sense_state.add_input(dy.concatenate([c_t_sense, dy.tanh(c_t_sense)]))
             attended.append(c_t_sense)
 
         attended_rev = list(reversed(attended))
