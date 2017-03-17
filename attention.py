@@ -97,11 +97,10 @@ class Attention:
         self.w2_att = model.add_parameters((self.attention_size))
 
     def load_model(self):
-        (self.src_lookup, self.tgt_lookup, self.l2r_builder, self.r2l_builder,
-         self.dec_builder, self.W_m, self.b_m, self.W_s, self.b_s,
-         self.W_y, self.b_y, self.W1_att_f, self.W1_att_e,
-         self.w2_att) = self.model.load(self.model_name)
+        self.model.load(self.model_name)
         
+    def save_model(self):
+        self.model.save(self.model_name)
 
     # Calculates the context vector using a MLP
     def __attention_mlp(self, h_fs_matrix, h_e, fixed_attentional_component):
@@ -329,10 +328,7 @@ class Attention:
 
             if dev_perplexity < best_dev_perplexity:
                 best_dev_perplexity = dev_perplexity
-                self.model.save(self.model_name, [self.src_lookup, self.tgt_lookup,
-                    self.l2r_builder, self.r2l_builder, self.dec_builder, self.W_m, self.b_m,
-                    self.W_s, self.b_s, self.W_y, self.b_y, self.W1_att_f,
-                    self.W1_att_e, self.w2_att])
+                self.save_model()
 
             if epoch_output:
                 self.translate(test, 'translated_test_epoch_' + str(i))
@@ -374,9 +370,7 @@ class Attention:
 
             if dev_perplexity < best_dev_perplexity:
                 best_dev_perplexity = dev_perplexity
-                self.model.save(self.model_name, [self.src_lookup, self.tgt_lookup,
-                    self.l2r_builder, self.r2l_builder, self.dec_builder, self.W_m, self.b_m,
-                    self.W_y, self.b_y, self.W1_att_f, self.W1_att_e, self.w2_att])
+                self.save_model()
 
             if epoch_output:
                 self.translate(test, 'translated_test_epoch_' + str(i))
