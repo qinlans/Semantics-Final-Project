@@ -8,7 +8,7 @@ import pickle
 import os
 trans_out_dir = './output/'
 
-LOAD_MODEL = False 
+LOAD_MODEL = True 
 TRAIN = True
 
 def read_file(filename):
@@ -529,19 +529,20 @@ class Attention:
                         (i, j, total_loss/total_words, np.exp(total_loss/total_words)))
                     total_loss, total_words = 0, 0
 
-            dev_loss, dev_total_words = 0, 0
-            for j, dev_instance in enumerate(dev):
-                loss, num_words = self.__step(dev_instance)
-                dev_loss += loss.scalar_value()
-                dev_total_words += num_words
+                if j % 3000 == 0:
+                    dev_loss, dev_total_words = 0, 0
+                    for j, dev_instance in enumerate(dev):
+                        loss, num_words = self.__step(dev_instance)
+                        dev_loss += loss.scalar_value()
+                        dev_total_words += num_words
 
-            dev_perplexity = np.exp(dev_loss/dev_total_words)
-            print('Epoch %d dev loss: %f and perplexity: %f' % 
-                (i, dev_loss/dev_total_words, dev_perplexity))
+                    dev_perplexity = np.exp(dev_loss/dev_total_words)
+                    print('Epoch %d dev loss: %f and perplexity: %f' % 
+                        (i, dev_loss/dev_total_words, dev_perplexity))
 
-            if dev_perplexity < best_dev_perplexity:
-                best_dev_perplexity = dev_perplexity
-                self.save_model()
+                    if dev_perplexity < best_dev_perplexity:
+                        best_dev_perplexity = dev_perplexity
+                        self.save_model()
 
             if epoch_output:
                 self.translate(test, output_prefix + '_epoch_' + str(i))
@@ -570,20 +571,21 @@ class Attention:
                         (i, j, total_loss/total_words, np.exp(total_loss/total_words)))
                     total_loss, total_words = 0, 0
 
-            dev_loss, dev_total_words = 0, 0
-            for j, (start, length) in enumerate(dev_order):
-                dev_batch = dev[start:start+length]
-                loss, num_words = self.__step_batch(dev_batch)
-                dev_loss += loss.scalar_value()
-                dev_total_words += num_words
+                if j % 3000 == 0:
+                    dev_loss, dev_total_words = 0, 0
+                    for j, (start, length) in enumerate(dev_order):
+                        dev_batch = dev[start:start+length]
+                        loss, num_words = self.__step_batch(dev_batch)
+                        dev_loss += loss.scalar_value()
+                        dev_total_words += num_words
 
-            dev_perplexity = np.exp(dev_loss/dev_total_words)
-            print('Epoch %d dev loss: %f and perplexity: %f' % 
-                (i, dev_loss/dev_total_words, dev_perplexity))
+                    dev_perplexity = np.exp(dev_loss/dev_total_words)
+                    print('Epoch %d dev loss: %f and perplexity: %f' % 
+                        (i, dev_loss/dev_total_words, dev_perplexity))
 
-            if dev_perplexity < best_dev_perplexity:
-                best_dev_perplexity = dev_perplexity
-                self.save_model()
+                    if dev_perplexity < best_dev_perplexity:
+                        best_dev_perplexity = dev_perplexity
+                        self.save_model()
 
             if epoch_output:
                 self.translate(test, output_prefix + '_epoch_' + str(i))
