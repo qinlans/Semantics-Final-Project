@@ -8,7 +8,7 @@ import pickle
 import os
 trans_out_dir = './output/'
 
-LOAD_MODEL = True 
+LOAD_MODEL = False 
 TRAIN = True
 
 def read_file(filename):
