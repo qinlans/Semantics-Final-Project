@@ -366,7 +366,7 @@ class Attention:
                         (i, j, total_loss/total_words, np.exp(total_loss/total_words)))
                     total_loss, total_words = 0, 0
 
-                if j % 3000 = 0:
+                if j % 3000 == 0:
                     dev_loss, dev_total_words = 0, 0
                     for j, dev_instance in enumerate(dev):
                         loss, num_words = self.__step(dev_instance)
