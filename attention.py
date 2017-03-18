@@ -3,7 +3,8 @@ import dynet as dy
 import numpy as np
 import random
 import sys
-
+import os
+import pickle
 trans_out_dir = "./output/"
 
 LOAD_MODEL = False 
@@ -59,8 +60,8 @@ def create_batches(sorted_dataset, max_batch_size):
 
 class Attention:
     def __init__(self, model, training_src, training_tgt, model_name, max_batch_size=32, num_epochs=30,
-        layers=1, embed_size=512, hidden_size=512, attention_size=128, max_len=50, unk_threshold=1,
-        builder=dy.LSTMBuilder):
+            layers=1, embed_size=300, hidden_size=512, attention_size=128, max_len=50, unk_threshold=1,
+            builder=dy.LSTMBuilder, src_vectors_file=None):
         self.model = model
         self.training = [(x, y) for (x, y) in zip(training_src, training_tgt)]
         self.src_token_to_id, self.src_id_to_token = build_dicts(training_src, unk_threshold)
@@ -75,8 +76,12 @@ class Attention:
         self.hidden_size = hidden_size
         self.attention_size = attention_size
         self.max_len = max_len
+        if src_vectors_file is not None:
+            self.load_src_lookup_params(src_vectors_file, model)
+        else:
+            self.src_lookup = model.add_lookup_parameters((self.src_vocab_size, self.embed_size))
 
-        self.src_lookup = model.add_lookup_parameters((self.src_vocab_size, self.embed_size))
+
         self.tgt_lookup = model.add_lookup_parameters((self.tgt_vocab_size, self.embed_size))
         self.l2r_builder = builder(self.layers, self.embed_size, self.hidden_size, model)
         self.r2l_builder = builder(self.layers, self.embed_size, self.hidden_size, model)
@@ -101,6 +106,52 @@ class Attention:
 
     def load_model(self):
         self.model.load(self.model_name)
+
+    def load_src_lookup_params(self, src_vectors_file, model):
+        self.src_lookup = model.add_lookup_parameters((self.src_vocab_size, self.embed_size))
+        pickle_fn = 'src_lookup_vectors.pkl'
+        print('Loading source vectors as lookup parameters')
+        count = 0
+
+        if not os.path.exists(pickle_fn):
+            init_array = np.zeros((self.src_vocab_size, self.embed_size))
+            with open(src_vectors_file) as vector_file:
+                first_line = True
+                for l in vector_file:
+                    if first_line:
+                        first_line = False
+                    else:
+                        try:
+                            space_delim = l.split()
+                            word = space_delim[0]
+                            w_id = int(self.src_token_to_id[word])
+                            if w_id != 0:
+                                init_array[w_id, :] = np.asarray(space_delim[1:])
+                                count += 1
+
+                        except Exception as e:
+                            print('Error:{0}, {1}'.format(e, l))
+            with open(pickle_fn, 'wb') as pickle_file:
+                pickle.dump(init_array, pickle_file)
+
+            for i in range(self.src_vocab_size):
+                if not np.any(init_array[i, :]):
+                    expr = dy.lookup(self.src_lookup, i)
+                    init_array[i, :] = expr.npvalue()
+        else:
+            with open(pickle_fn, 'rb') as pickle_file:
+                init_array = pickle.load(pickle_file)
+
+            for i in range(self.src_vocab_size):
+                if not np.any(init_array[i, :]):
+                    expr = dy.lookup(self.src_lookup, i)
+                    init_array[i, :] = expr.npvalue()
+                else:
+                    count += 1
+        print("Loading vectors time:{0}".format(elapsed))
+        print('Set: {0} vectors out of vocab size: {1}'.format(count, self.src_vocab_size))
+
+        self.src_lookup.init_from_array(init_array)
 
     # Calculates the context vector using a MLP
     def __attention_mlp(self, h_fs_matrix, h_e, fixed_attentional_component):
@@ -389,10 +440,13 @@ def main():
     dev_src = read_file(sys.argv[3])
     dev_tgt = read_file(sys.argv[4])
     test_src = read_file(sys.argv[5])
-    blind_src = read_file(sys.argv[6])
-    model_name = sys.argv[7]
+    model_name = sys.argv[6]
+
+    src_vector_file = None
+    if len(sys.argv) > 6:
+        src_vector_file = sys.argv[7]
     dev = [(x, y) for (x, y) in zip(dev_src, dev_tgt)]
-    attention = Attention(model, training_src, training_tgt, model_name)
+    attention = Attention(model, training_src, training_tgt, model_name, src_vectors_file=src_vector_file)
 
     if LOAD_MODEL:
         attention.load_model()
@@ -400,6 +454,5 @@ def main():
         attention.train_batch(dev, trainer, test_src, True)
 
     attention.translate(test_src, 'test.primary.en')
-    attention.translate(blind_src, 'blind.primary.en')
 
 if __name__ == '__main__': main()

@@ -4,7 +4,8 @@ import numpy as np
 import random
 import re
 import sys
-
+import pickle
+import os
 trans_out_dir = './output/'
 
 LOAD_MODEL = False 
@@ -203,30 +204,46 @@ class Attention:
     def load_src_lookup_params(self, src_vectors_file, model):
         self.src_lookup = model.add_lookup_parameters((self.src_vocab_size, self.embed_size))
 
+        pickle_fn = 'src_lookup_vectors_retro.pkl'
         print('Loading source vectors as lookup parameters')
-        init_array = np.zeros((self.src_vocab_size, self.embed_size))
         count = 0
-        with open(src_vectors_file) as vector_file:
-            first_line = True
-            for l in vector_file:
-                if first_line:
-                    first_line = False
-                else:
-                    try:
-                        space_delim = l.split()
-                        word = space_delim[0].split('|')[0]
-                        sense = space_delim[0].split('|')[1].strip(':')
-                        w_id = int(self.src_token_sense_to_id[(word, sense)])
-                        if w_id != 0:
-                            init_array[w_id, :] = np.asarray(space_delim[1:])
-                            count += 1
 
-                    except Exception as e:
-                        print('Error:{0}, {1}'.format(e, l))
-        for i in range(self.src_vocab_size):
-            if not np.any(init_array[i, :]):
-                expr = dy.lookup(self.src_lookup, i)
-                init_array[i, :] = expr.npvalue()
+        if not os.path.exists(pickle_fn):
+            init_array = np.zeros((self.src_vocab_size, self.embed_size))
+
+            with open(src_vectors_file) as vector_file:
+                first_line = True
+                for l in vector_file:
+                    if first_line:
+                        first_line = False
+                    else:
+                        try:
+                            space_delim = l.split()
+                            word = space_delim[0].split('|')[0]
+                            sense = space_delim[0].split('|')[1].strip(':')
+                            w_id = int(self.src_token_sense_to_id[(word, sense)])
+                            if w_id != 0:
+                                init_array[w_id, :] = np.asarray(space_delim[1:])
+                                count += 1
+
+                        except Exception as e:
+                            print('Error:{0}, {1}'.format(e, l))
+            with open(pickle_fn, 'wb') as pickle_file:
+                pickle.dump(init_array, pickle_file)
+            for i in range(self.src_vocab_size):
+                if not np.any(init_array[i, :]):
+                    expr = dy.lookup(self.src_lookup, i)
+                    init_array[i, :] = expr.npvalue()
+        else:
+            with open(pickle_fn, 'rb') as pickle_file:
+                init_array = pickle.load(pickle_file)
+
+            for i in range(self.src_vocab_size):
+                if not np.any(init_array[i, :]):
+                    expr = dy.lookup(self.src_lookup, i)
+                    init_array[i, :] = expr.npvalue()
+                else:
+                    count += 1
 
         print('Set: {0} vectors out of vocab size: {1}'.format(count, self.src_vocab_size))
 
