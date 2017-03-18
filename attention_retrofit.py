@@ -396,7 +396,6 @@ class Attention:
 
         return ' '.join(trans_sentence[1:])
 
-    """
     def __step_batch(self, batch):
         dy.renew_cg()
 
@@ -411,25 +410,46 @@ class Attention:
 
         src_batch = [x[0] for x in batch]
         tgt_batch = [x[1] for x in batch]
-        src_batch_rev = [list(reversed(sent)) for sent in src_batch]
+        batch_size = len(src_batch)
+
+        attended_batch = []
+        for src_sent in src_batch:
+            attended = []
+            c_t_sense = dy.vecInput(self.embed_size)
+            sense_start = dy.concatenate([dy.lookup(self.src_lookup, self.src_token_to_id['<S>'][0]), dy.tanh(c_t_sense)])
+            sense_state = self.sense_builder.initial_state().add_input(sense_start)
+
+            for cw in src_sent:
+                cw_sense_ids = self.src_token_to_id[cw]
+                cw_senses = [dy.lookup(self.src_lookup, sense_id) for sense_id in cw_sense_ids]
+                h_senses = dy.concatenate_cols(cw_senses)
+                h_m = sense_state.output()
+                c_t_sense = self.__sense_attention_mlp(h_senses, h_m)
+                sense_state = sense_state.add_input(dy.concatenate([c_t_sense, dy.tanh(c_t_sense)]))
+                attended.append(c_t_sense)
+
+            attended_batch.append(attended)
+        attended_batch_rev = [list(reversed(sent)) for sent in attended_batch]
 
         # Encoder
         src_cws_l2r = []
         src_cws_r2l = []
-        src_len = [len(sent) for sent in src_batch]        
+        src_len = [len(sent) for sent in attended_batch]        
         max_src_len = np.max(src_len)
  
         for i in range(max_src_len):
-            src_cws_l2r.append([self.src_token_to_id[sent[i]] for sent in src_batch])
-            src_cws_r2l.append([self.src_token_to_id[sent[i]] for sent in src_batch_rev])
+            src_cws_l2r.append([sent[i] for sent in attended_batch])
+            src_cws_r2l.append([sent[i] for sent in attended_batch_rev])
 
         l2r_state = self.l2r_builder.initial_state()
         r2l_state = self.r2l_builder.initial_state()
         l2r_contexts = []
         r2l_contexts = []
         for i, (cws_l2r, cws_r2l) in enumerate(zip(src_cws_l2r, src_cws_r2l)):
-            l2r_state = l2r_state.add_input(dy.lookup_batch(self.src_lookup, cws_l2r))
-            r2l_state = r2l_state.add_input(dy.lookup_batch(self.src_lookup, cws_r2l))
+            l2r_batch = dy.reshape(dy.concatenate_cols(cws_l2r), (self.embed_size,), batch_size=batch_size)
+            l2r_state = l2r_state.add_input(l2r_batch)
+            r2l_batch = dy.reshape(dy.concatenate_cols(cws_r2l), (self.embed_size,), batch_size=batch_size)
+            r2l_state = r2l_state.add_input(r2l_batch)
             l2r_contexts.append(l2r_state.output())
             r2l_contexts.append(r2l_state.output())
         r2l_contexts.reverse()
@@ -473,7 +493,6 @@ class Attention:
             losses.append(mask_loss)
 
         return dy.sum_batches(dy.esum(losses)), num_words
-    """
 
     def train(self, dev, trainer, test, epoch_output=False, output_prefix='translated_test'):
         best_dev_perplexity = 9e9
@@ -510,7 +529,6 @@ class Attention:
             if epoch_output:
                 self.translate(test, output_prefix + '_epoch_' + str(i))
 
-    """
     def train_batch(self, dev, trainer, test, epoch_output=False, output_prefix='translated_test'):
         self.training.sort(key=lambda t: len(t[0]), reverse=True)
         dev.sort(key=lambda t: len(t[0]), reverse=True)
@@ -552,7 +570,6 @@ class Attention:
 
             if epoch_output:
                 self.translate(test, output_prefix + '_epoch_' + str(i))
-    """
 
     def translate(self, src, output_filename):
         outfile = open(trans_out_dir + output_filename, 'wb')
@@ -582,7 +599,7 @@ def main():
     if LOAD_MODEL:
         attention.load_model()
     if TRAIN:
-        attention.train(dev, trainer, test_src, True, 'test.' + out_language)
+        attention.train_batch(dev, trainer, test_src, True, 'test.' + out_language)
 
     attention.translate(test_src, 'test.' + out_language)
 
