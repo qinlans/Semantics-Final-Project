@@ -348,8 +348,9 @@ class Attention:
 
         return dy.sum_batches(dy.esum(losses)), num_words
 
-    def train(self, dev, trainer, test, epoch_output=False):
+    def train(self, dev, trainer, test, train_output=False):
         best_dev_perplexity = 9e9
+        counter = 1
         for i in range(self.num_epochs):
             total_loss, total_words = 0, 0
             random.shuffle(self.training)
@@ -381,14 +382,16 @@ class Attention:
                         best_dev_perplexity = dev_perplexity
                         self.save_model()
 
-            if epoch_output:
-                self.translate(test, 'baseline_epoch_' + str(i))
+                    if train_output:
+                        self.translate(test, 'baseline_' + str(counter))
+                        counter += 1
 
-    def train_batch(self, dev, trainer, test, epoch_output=False):
+    def train_batch(self, dev, trainer, test, train_output=False):
         self.training.sort(key=lambda t: len(t[0]), reverse=True)
         dev.sort(key=lambda t: len(t[0]), reverse=True)
         training_order = create_batches(self.training, self.max_batch_size) 
         dev_order = create_batches(dev, self.max_batch_size)
+        counter = 1
         best_dev_perplexity = 9e9
         for i in range(self.num_epochs):
             total_loss, total_words = 0, 0
@@ -424,8 +427,9 @@ class Attention:
                         best_dev_perplexity = dev_perplexity
                         self.save_model()
 
-            if epoch_output:
-                self.translate(test, 'baseline_epoch_' + str(i))
+                    if train_output:
+                        self.translate(test, 'baseline_' + str(counter))
+                        counter += 1
 
     def translate(self, src, output_filename):
         outfile = open(trans_out_dir + output_filename, 'wb')
