@@ -148,7 +148,6 @@ class Attention:
                     init_array[i, :] = expr.npvalue()
                 else:
                     count += 1
-        print("Loading vectors time:{0}".format(elapsed))
         print('Set: {0} vectors out of vocab size: {1}'.format(count, self.src_vocab_size))
 
         self.src_lookup.init_from_array(init_array)
@@ -349,8 +348,9 @@ class Attention:
 
         return dy.sum_batches(dy.esum(losses)), num_words
 
-    def train(self, dev, trainer, test, epoch_output=False):
+    def train(self, dev, trainer, test, train_output=False):
         best_dev_perplexity = 9e9
+        counter = 1
         for i in range(self.num_epochs):
             total_loss, total_words = 0, 0
             random.shuffle(self.training)
@@ -367,28 +367,31 @@ class Attention:
                         (i, j, total_loss/total_words, np.exp(total_loss/total_words)))
                     total_loss, total_words = 0, 0
 
-            dev_loss, dev_total_words = 0, 0
-            for j, dev_instance in enumerate(dev):
-                loss, num_words = self.__step(dev_instance)
-                dev_loss += loss.scalar_value()
-                dev_total_words += num_words
+                if j % 3000 == 0:
+                    dev_loss, dev_total_words = 0, 0
+                    for j, dev_instance in enumerate(dev):
+                        loss, num_words = self.__step(dev_instance)
+                        dev_loss += loss.scalar_value()
+                        dev_total_words += num_words
 
-            dev_perplexity = np.exp(dev_loss/dev_total_words)
-            print('Epoch %d dev loss: %f and perplexity: %f' % 
-                (i, dev_loss/dev_total_words, dev_perplexity))
+                    dev_perplexity = np.exp(dev_loss/dev_total_words)
+                    print('Epoch %d dev loss: %f and perplexity: %f' % 
+                        (i, dev_loss/dev_total_words, dev_perplexity))
 
-            if dev_perplexity < best_dev_perplexity:
-                best_dev_perplexity = dev_perplexity
-                self.save_model()
+                    if dev_perplexity < best_dev_perplexity:
+                        best_dev_perplexity = dev_perplexity
+                        self.save_model()
 
-            if epoch_output:
-                self.translate(test, 'translated_test_epoch_' + str(i))
+                    if train_output:
+                        self.translate(test, 'baseline_' + str(counter))
+                        counter += 1
 
-    def train_batch(self, dev, trainer, test, epoch_output=False):
+    def train_batch(self, dev, trainer, test, train_output=False):
         self.training.sort(key=lambda t: len(t[0]), reverse=True)
         dev.sort(key=lambda t: len(t[0]), reverse=True)
         training_order = create_batches(self.training, self.max_batch_size) 
         dev_order = create_batches(dev, self.max_batch_size)
+        counter = 1
         best_dev_perplexity = 9e9
         for i in range(self.num_epochs):
             total_loss, total_words = 0, 0
@@ -408,23 +411,25 @@ class Attention:
                         (i, j, total_loss/total_words, np.exp(total_loss/total_words)))
                     total_loss, total_words = 0, 0
 
-            dev_loss, dev_total_words = 0, 0
-            for j, (start, length) in enumerate(dev_order):
-                dev_batch = dev[start:start+length]
-                loss, num_words = self.__step_batch(dev_batch)
-                dev_loss += loss.scalar_value()
-                dev_total_words += num_words
+                if j % 3000 == 0:
+                    dev_loss, dev_total_words = 0, 0
+                    for j, (start, length) in enumerate(dev_order):
+                        dev_batch = dev[start:start+length]
+                        loss, num_words = self.__step_batch(dev_batch)
+                        dev_loss += loss.scalar_value()
+                        dev_total_words += num_words
 
-            dev_perplexity = np.exp(dev_loss/dev_total_words)
-            print('Epoch %d dev loss: %f and perplexity: %f' % 
-                (i, dev_loss/dev_total_words, dev_perplexity))
+                    dev_perplexity = np.exp(dev_loss/dev_total_words)
+                    print('Epoch %d dev loss: %f and perplexity: %f' % 
+                        (i, dev_loss/dev_total_words, dev_perplexity))
 
-            if dev_perplexity < best_dev_perplexity:
-                best_dev_perplexity = dev_perplexity
-                self.save_model()
+                    if dev_perplexity < best_dev_perplexity:
+                        best_dev_perplexity = dev_perplexity
+                        self.save_model()
 
-            if epoch_output:
-                self.translate(test, 'translated_test_epoch_' + str(i))
+                    if train_output:
+                        self.translate(test, 'baseline_' + str(counter))
+                        counter += 1
 
     def translate(self, src, output_filename):
         outfile = open(trans_out_dir + output_filename, 'wb')
