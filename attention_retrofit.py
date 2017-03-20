@@ -10,6 +10,7 @@ trans_out_dir = './output/'
 
 LOAD_MODEL = False 
 TRAIN = True
+OLAF = True
 
 def read_file(filename):
   dataset = []
@@ -636,15 +637,13 @@ def main():
         src_vector_file = sys.argv[7]
     dev = [(x, y) for (x, y) in zip(dev_src, dev_tgt)]
 
-    olaf = True
-
-    if olaf:
+    if OLAF:
         print("Burrrr!  The vectors are frozen!")
     else:
         print("The vectors are not frozen and olaf is melting!")
 
     attention = Attention(model, training_src, training_tgt, model_name,
-        src_vectors_file=src_vector_file, frozen_vectors=olaf)
+        src_vectors_file=src_vector_file, frozen_vectors=OLAF)
 
     out_language = sys.argv[1].split('.')[1]
 

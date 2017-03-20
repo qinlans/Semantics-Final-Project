@@ -9,6 +9,7 @@ trans_out_dir = "./output/"
 
 LOAD_MODEL = False 
 TRAIN = True
+OLAF = True
 
 frozen_art = """
            ___
@@ -487,9 +488,7 @@ def main():
     test_src = read_file(sys.argv[5])
     model_name = sys.argv[6]
 
-    olaf = False
-
-    if olaf:
+    if OLAF:
         print("Burrrr!  The vectors are frozen!")
         print(frozen_art)
     else:
@@ -501,7 +500,7 @@ def main():
         src_vector_file = sys.argv[7]
     dev = [(x, y) for (x, y) in zip(dev_src, dev_tgt)]
     attention = Attention(model, training_src, training_tgt, model_name, src_vectors_file=src_vector_file,
-                          frozen_vectors=olaf)
+                          frozen_vectors=OLAF)
 
     if LOAD_MODEL:
         attention.load_model()
