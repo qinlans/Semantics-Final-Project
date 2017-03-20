@@ -21,6 +21,7 @@ def read_file(filename):
       dataset.append(sent)
   return dataset
 
+
 def build_dicts(corpus, unk_threshold=1, vector_word_list=None):
     word_counts = defaultdict(lambda: 0)
     for line in corpus:
@@ -65,6 +66,7 @@ def build_dicts(corpus, unk_threshold=1, vector_word_list=None):
                     token_sense_to_id[(word, sense)] = num_tokens
 
                     id_to_token[num_tokens] = (word, sense)
+
                     num_tokens += 1
             elif count > unk_threshold and word not in token_to_id and word not in vector_word_list:
                 token_to_id[word] = []
@@ -99,7 +101,7 @@ def create_batches(sorted_dataset, max_batch_size):
 class Attention:
     def __init__(self, model, training_src, training_tgt, model_name, max_batch_size=32, num_epochs=30,
             layers=1, embed_size=300, hidden_size=512, word_attention_size=128, sense_attention_size=32,
-            max_len=50, unk_threshold=1, src_vectors_file=None, builder=dy.LSTMBuilder):
+            max_len=50, unk_threshold=1, src_vectors_file=None, builder=dy.LSTMBuilder, frozen_vectors= False):
         self.model = model
         self.training = [(x, y) for (x, y) in zip(training_src, training_tgt)]
 
@@ -121,9 +123,10 @@ class Attention:
         self.max_len = max_len
 
         if src_vectors_file is not None:
-            self.load_src_lookup_params(src_vectors_file, model)
+            self.frozen_params = self.load_src_lookup_params(src_vectors_file, model)
         else:
             self.src_lookup = model.add_lookup_parameters((self.src_vocab_size, self.embed_size))
+            self.frozen_params = defaultdict(lambda: False)
 
         self.tgt_lookup = model.add_lookup_parameters((self.tgt_vocab_size, self.embed_size))
         self.l2r_builder = builder(self.layers, self.embed_size, self.hidden_size, model)
@@ -148,6 +151,15 @@ class Attention:
         self.W1_att_senses = model.add_parameters((self.sense_attention_size, self.embed_size))
         self.W1_att_m = model.add_parameters((self.sense_attention_size, self.hidden_size))
         self.w2_att_s = model.add_parameters((self.sense_attention_size))
+
+
+    def lookup_frozen(self, lookup_matrix, index):
+        if self.frozen_params[index]:
+            return dy.const_lookup(lookup_matrix, index)
+        else:
+            return dy.lookup(lookup_matrix, index)
+
+
 
     def load_src_words(self, src_vectors_file):
         print('Reading source vectors from file ' + src_vectors_file)
@@ -208,6 +220,8 @@ class Attention:
         print('Loading source vectors as lookup parameters')
         count = 0
 
+        frozen_params = {}
+
         if not os.path.exists(pickle_fn):
             init_array = np.zeros((self.src_vocab_size, self.embed_size))
 
@@ -225,6 +239,7 @@ class Attention:
                             if w_id != 0:
                                 init_array[w_id, :] = np.asarray(space_delim[1:])
                                 count += 1
+                                frozen_params[w_id] = True
 
                         except Exception as e:
                             print('Error:{0}, {1}'.format(e, l))
@@ -242,12 +257,16 @@ class Attention:
                 if not np.any(init_array[i, :]):
                     expr = dy.lookup(self.src_lookup, i)
                     init_array[i, :] = expr.npvalue()
+                    frozen_params[i] = False
+
                 else:
                     count += 1
 
         print('Set: {0} vectors out of vocab size: {1}'.format(count, self.src_vocab_size))
 
         self.src_lookup.init_from_array(init_array)
+
+        return frozen_params
 
     def save_model(self):
         self.model.save(self.model_name)
@@ -578,6 +597,7 @@ class Attention:
             outfile.write('%s\n' % trans_sent)
  
 def main():
+
     model = dy.Model()
     trainer = dy.SimpleSGDTrainer(model)
     training_src = read_file(sys.argv[1])
@@ -591,8 +611,11 @@ def main():
     if len(sys.argv) > 6:
         src_vector_file = sys.argv[7]
     dev = [(x, y) for (x, y) in zip(dev_src, dev_tgt)]
+
+    olaf = True
+
     attention = Attention(model, training_src, training_tgt, model_name,
-        src_vectors_file=src_vector_file)
+        src_vectors_file=src_vector_file, frozen_vectors= olaf)
 
     out_language = sys.argv[1].split('.')[1]
 
