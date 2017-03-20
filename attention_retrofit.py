@@ -124,6 +124,8 @@ class Attention:
 
         if src_vectors_file is not None:
             self.frozen_params = self.load_src_lookup_params(src_vectors_file, model)
+            if not frozen_vectors:
+                self.frozen_params = defaultdict(lambda: False)
         else:
             self.src_lookup = model.add_lookup_parameters((self.src_vocab_size, self.embed_size))
             self.frozen_params = defaultdict(lambda: False)
@@ -154,10 +156,8 @@ class Attention:
 
 
     def lookup_frozen(self, lookup_matrix, index):
-        if self.frozen_params[index]:
-            return dy.const_lookup(lookup_matrix, index)
-        else:
-            return dy.lookup(lookup_matrix, index)
+        return dy.lookup(lookup_matrix, index=index, update=not self.frozen_params[index])
+
 
 
 
@@ -258,8 +258,9 @@ class Attention:
                     expr = dy.lookup(self.src_lookup, i)
                     init_array[i, :] = expr.npvalue()
                     frozen_params[i] = False
-
                 else:
+                    frozen_params[i] = True
+
                     count += 1
 
         print('Set: {0} vectors out of vocab size: {1}'.format(count, self.src_vocab_size))
@@ -312,11 +313,11 @@ class Attention:
         # Sense-level attention
         attended = []
         c_t_sense = dy.vecInput(self.embed_size)
-        sense_start = dy.concatenate([dy.lookup(self.src_lookup, self.src_token_to_id['<S>'][0]), dy.tanh(c_t_sense)])
+        sense_start = dy.concatenate([self.lookup_frozen(self.src_lookup, self.src_token_to_id['<S>'][0]), dy.tanh(c_t_sense)])
         sense_state = self.sense_builder.initial_state().add_input(sense_start)
         for cw in src_sent:
             cw_sense_ids = self.src_token_to_id[cw]
-            cw_senses = [dy.lookup(self.src_lookup, sense_id) for sense_id in cw_sense_ids]
+            cw_senses = [self.lookup_frozen(self.src_lookup, sense_id) for sense_id in cw_sense_ids]
             h_senses = dy.concatenate_cols(cw_senses)
             h_m = sense_state.output()
             c_t_sense = self.__sense_attention_mlp(h_senses, h_m)
@@ -351,7 +352,7 @@ class Attention:
         start_state = dy.affine_transform([b_s, W_s, h_fs[-1]])
         dec_state = self.word_dec_builder.initial_state().set_s([start_state, dy.tanh(start_state)])
         for (cw, nw) in zip(tgt_sent, tgt_sent[1:]):
-            embed_t = dy.lookup(self.tgt_lookup, self.tgt_token_to_id[cw])
+            embed_t = self.lookup_frozen(self.tgt_lookup, self.tgt_token_to_id[cw])
             x_t = dy.concatenate([embed_t, c_t])
             dec_state = dec_state.add_input(x_t)
             h_e = dec_state.output()
@@ -379,11 +380,11 @@ class Attention:
         # Sense-level attention
         attended = []
         c_t_sense = dy.vecInput(self.embed_size)
-        sense_start = dy.concatenate([dy.lookup(self.src_lookup, self.src_token_to_id['<S>'][0]), c_t_sense])
+        sense_start = dy.concatenate([self.lookup_frozen(self.src_lookup, self.src_token_to_id['<S>'][0]), c_t_sense])
         sense_state = self.sense_builder.initial_state().add_input(sense_start)
         for cw in sent:
             cw_sense_ids = self.src_token_to_id[cw]
-            cw_senses = [dy.lookup(self.src_lookup, sense_id) for sense_id in cw_sense_ids]
+            cw_senses = [self.lookup_frozen(self.src_lookup, sense_id) for sense_id in cw_sense_ids]
             h_senses = dy.concatenate_cols(cw_senses)
             h_m = sense_state.output()
             c_t_sense = self.__sense_attention_mlp(h_senses, h_m)
@@ -417,7 +418,7 @@ class Attention:
         start_state = dy.affine_transform([b_s, W_s, h_fs[-1]])
         dec_state = self.word_dec_builder.initial_state().set_s([start_state, dy.tanh(start_state)])
         while len(trans_sentence) < self.max_len:
-            embed_t = dy.lookup(self.tgt_lookup, self.tgt_token_to_id[cw])
+            embed_t = self.lookup_frozen(self.tgt_lookup, self.tgt_token_to_id[cw])
             x_t = dy.concatenate([embed_t, c_t])
             dec_state = dec_state.add_input(x_t)
             h_e = dec_state.output()
@@ -452,12 +453,12 @@ class Attention:
         for src_sent in src_batch:
             attended = []
             c_t_sense = dy.vecInput(self.embed_size)
-            sense_start = dy.concatenate([dy.lookup(self.src_lookup, self.src_token_to_id['<S>'][0]), dy.tanh(c_t_sense)])
+            sense_start = dy.concatenate([self.lookup_frozen(self.src_lookup, self.src_token_to_id['<S>'][0]), dy.tanh(c_t_sense)])
             sense_state = self.sense_builder.initial_state().add_input(sense_start)
 
             for cw in src_sent:
                 cw_sense_ids = self.src_token_to_id[cw]
-                cw_senses = [dy.lookup(self.src_lookup, sense_id) for sense_id in cw_sense_ids]
+                cw_senses = [self.lookup_frozen(self.src_lookup, sense_id) for sense_id in cw_sense_ids]
                 h_senses = dy.concatenate_cols(cw_senses)
                 h_m = sense_state.output()
                 c_t_sense = self.__sense_attention_mlp(h_senses, h_m)
@@ -637,8 +638,13 @@ def main():
 
     olaf = True
 
+    if olaf:
+        print("Burrrr!  The vectors are frozen!")
+    else:
+        print("The vectors are not frozen and olaf is melting!")
+
     attention = Attention(model, training_src, training_tgt, model_name,
-        src_vectors_file=src_vector_file, frozen_vectors= olaf)
+        src_vectors_file=src_vector_file, frozen_vectors=olaf)
 
     out_language = sys.argv[1].split('.')[1]
 

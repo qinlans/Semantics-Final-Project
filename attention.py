@@ -10,6 +10,29 @@ trans_out_dir = "./output/"
 LOAD_MODEL = False 
 TRAIN = True
 
+frozen_art = """
+           ___
+         _[___]_  _
+          ( " )  [_]
+      '--(`~:~`)--|'
+        / `-:-' \ |
+   __.--\   :   /--.
+.'`      '-----'    '-.._"""
+
+non_frozen_art = """                |
+                |
+      `.        |        .'
+        `.    .---.    .'
+           .~       ~.
+          /   O   O   \\
+-- -- -- (             ) -- -- --
+          \    `-'    /
+           ~.       .~
+        .'    ~---~    `.
+      .'        |        `.
+                |
+                |"""
+
 def read_file(filename):
   dataset = []
   with open(filename, 'r') as f:
@@ -61,7 +84,7 @@ def create_batches(sorted_dataset, max_batch_size):
 class Attention:
     def __init__(self, model, training_src, training_tgt, model_name, max_batch_size=32, num_epochs=30,
             layers=1, embed_size=300, hidden_size=512, attention_size=128, max_len=50, unk_threshold=1,
-            builder=dy.LSTMBuilder, src_vectors_file=None):
+            builder=dy.LSTMBuilder, src_vectors_file=None, frozen_vectors=False):
         self.model = model
         self.training = [(x, y) for (x, y) in zip(training_src, training_tgt)]
         self.src_token_to_id, self.src_id_to_token = build_dicts(training_src, unk_threshold)
@@ -77,9 +100,13 @@ class Attention:
         self.attention_size = attention_size
         self.max_len = max_len
         if src_vectors_file is not None:
-            self.load_src_lookup_params(src_vectors_file, model)
+            self.frozen_params = self.load_src_lookup_params(src_vectors_file, model)
+            if not frozen_vectors:
+                self.frozen_params = defaultdict(lambda: False)
         else:
             self.src_lookup = model.add_lookup_parameters((self.src_vocab_size, self.embed_size))
+            self.frozen_params = defaultdict(lambda: False)
+
 
 
         self.tgt_lookup = model.add_lookup_parameters((self.tgt_vocab_size, self.embed_size))
@@ -107,11 +134,15 @@ class Attention:
     def load_model(self):
         self.model.load(self.model_name)
 
+    def lookup_frozen(self, lookup_matrix, index):
+        return dy.lookup(lookup_matrix, index=index, update=not self.frozen_params[index])
+
     def load_src_lookup_params(self, src_vectors_file, model):
         self.src_lookup = model.add_lookup_parameters((self.src_vocab_size, self.embed_size))
         pickle_fn = 'src_lookup_vectors.pkl'
         print('Loading source vectors as lookup parameters')
         count = 0
+        frozen_params = {}
 
         if not os.path.exists(pickle_fn):
             init_array = np.zeros((self.src_vocab_size, self.embed_size))
@@ -128,6 +159,8 @@ class Attention:
                             if w_id != 0:
                                 init_array[w_id, :] = np.asarray(space_delim[1:])
                                 count += 1
+                                frozen_params[w_id] = True
+
 
                         except Exception as e:
                             print('Error:{0}, {1}'.format(e, l))
@@ -138,6 +171,8 @@ class Attention:
                 if not np.any(init_array[i, :]):
                     expr = dy.lookup(self.src_lookup, i)
                     init_array[i, :] = expr.npvalue()
+                    frozen_params[i] = False
+
         else:
             with open(pickle_fn, 'rb') as pickle_file:
                 init_array = pickle.load(pickle_file)
@@ -146,11 +181,16 @@ class Attention:
                 if not np.any(init_array[i, :]):
                     expr = dy.lookup(self.src_lookup, i)
                     init_array[i, :] = expr.npvalue()
+                    frozen_params[i] = False
+
                 else:
                     count += 1
+                    frozen_params[i] = True
+
         print('Set: {0} vectors out of vocab size: {1}'.format(count, self.src_vocab_size))
 
         self.src_lookup.init_from_array(init_array)
+        return frozen_params
 
     # Calculates the context vector using a MLP
     def __attention_mlp(self, h_fs_matrix, h_e, fixed_attentional_component):
@@ -184,9 +224,9 @@ class Attention:
         l2r_contexts = []
         r2l_contexts = []
         for (cw_l2r, cw_r2l) in zip(src_sent, src_sent_rev):
-            l2r_state = l2r_state.add_input(dy.lookup(self.src_lookup, self.src_token_to_id[cw_l2r]))
+            l2r_state = l2r_state.add_input(self.lookup_frozen(self.src_lookup, self.src_token_to_id[cw_l2r]))
             l2r_contexts.append(l2r_state.output())
-            r2l_state = r2l_state.add_input(dy.lookup(self.src_lookup, self.src_token_to_id[cw_r2l]))
+            r2l_state = r2l_state.add_input(self.lookup_frozen(self.src_lookup, self.src_token_to_id[cw_r2l]))
             r2l_contexts.append(r2l_state.output())
         r2l_contexts.reverse()
 
@@ -204,7 +244,7 @@ class Attention:
         start_state = dy.affine_transform([b_s, W_s, h_fs[-1]])
         dec_state = self.dec_builder.initial_state().set_s([start_state, dy.tanh(start_state)])
         for (cw, nw) in zip(tgt_sent, tgt_sent[1:]):
-            embed_t = dy.lookup(self.tgt_lookup, self.tgt_token_to_id[cw])
+            embed_t = self.lookup_frozen(self.tgt_lookup, self.tgt_token_to_id[cw])
             x_t = dy.concatenate([embed_t, c_t])
             dec_state = dec_state.add_input(x_t)
             h_e = dec_state.output()
@@ -237,8 +277,8 @@ class Attention:
         l2r_contexts = []
         r2l_contexts = []
         for (cw_l2r, cw_r2l) in zip(sent, sent_rev):
-            l2r_state = l2r_state.add_input(dy.lookup(self.src_lookup, self.src_token_to_id[cw_l2r]))
-            r2l_state = r2l_state.add_input(dy.lookup(self.src_lookup, self.src_token_to_id[cw_r2l]))
+            l2r_state = l2r_state.add_input(self.lookup_frozen(self.src_lookup, self.src_token_to_id[cw_l2r]))
+            r2l_state = r2l_state.add_input(self.lookup_frozen(self.src_lookup, self.src_token_to_id[cw_r2l]))
             l2r_contexts.append(l2r_state.output())
             r2l_contexts.append(r2l_state.output())
         r2l_contexts.reverse()
@@ -256,7 +296,7 @@ class Attention:
         start_state = dy.affine_transform([b_s, W_s, h_fs[-1]])
         dec_state = self.dec_builder.initial_state().set_s([start_state, dy.tanh(start_state)])
         while len(trans_sentence) < self.max_len:
-            embed_t = dy.lookup(self.tgt_lookup, self.tgt_token_to_id[cw])
+            embed_t = self.lookup_frozen(self.tgt_lookup, self.tgt_token_to_id[cw])
             x_t = dy.concatenate([embed_t, c_t])
             dec_state = dec_state.add_input(x_t)
             h_e = dec_state.output()
@@ -447,11 +487,21 @@ def main():
     test_src = read_file(sys.argv[5])
     model_name = sys.argv[6]
 
+    olaf = False
+
+    if olaf:
+        print("Burrrr!  The vectors are frozen!")
+        print(frozen_art)
+    else:
+        print("The vectors are not frozen and olaf is melting!")
+        print(non_frozen_art)
+
     src_vector_file = None
     if len(sys.argv) > 6:
         src_vector_file = sys.argv[7]
     dev = [(x, y) for (x, y) in zip(dev_src, dev_tgt)]
-    attention = Attention(model, training_src, training_tgt, model_name, src_vectors_file=src_vector_file)
+    attention = Attention(model, training_src, training_tgt, model_name, src_vectors_file=src_vector_file,
+                          frozen_vectors=olaf)
 
     if LOAD_MODEL:
         attention.load_model()
