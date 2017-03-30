@@ -245,7 +245,7 @@ class Attention:
         start_state = dy.affine_transform([b_s, W_s, h_fs[-1]])
         dec_state = self.dec_builder.initial_state().set_s([start_state, dy.tanh(start_state)])
         for (cw, nw) in zip(tgt_sent, tgt_sent[1:]):
-            embed_t = self.lookup_frozen(self.tgt_lookup, self.tgt_token_to_id[cw])
+            embed_t = dy.lookup(self.tgt_lookup, self.tgt_token_to_id[cw])
             x_t = dy.concatenate([embed_t, c_t])
             dec_state = dec_state.add_input(x_t)
             h_e = dec_state.output()
@@ -297,7 +297,7 @@ class Attention:
         start_state = dy.affine_transform([b_s, W_s, h_fs[-1]])
         dec_state = self.dec_builder.initial_state().set_s([start_state, dy.tanh(start_state)])
         while len(trans_sentence) < self.max_len:
-            embed_t = self.lookup_frozen(self.tgt_lookup, self.tgt_token_to_id[cw])
+            embed_t = dy.lookup(self.tgt_lookup, self.tgt_token_to_id[cw])
             x_t = dy.concatenate([embed_t, c_t])
             dec_state = dec_state.add_input(x_t)
             h_e = dec_state.output()
