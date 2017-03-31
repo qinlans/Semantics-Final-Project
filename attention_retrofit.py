@@ -221,7 +221,7 @@ class Attention:
         print('Loading source vectors as lookup parameters')
         count = 0
 
-        frozen_params = {}
+        frozen_params = defaultdict(lambda: False)
 
         if not os.path.exists(pickle_fn):
             init_array = np.zeros((self.src_vocab_size, self.embed_size))
@@ -250,6 +250,8 @@ class Attention:
                 if not np.any(init_array[i, :]):
                     expr = dy.lookup(self.src_lookup, i)
                     init_array[i, :] = expr.npvalue()
+                    frozen_params[i] = False
+
         else:
             with open(pickle_fn, 'rb') as pickle_file:
                 init_array = pickle.load(pickle_file)

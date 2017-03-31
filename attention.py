@@ -143,7 +143,7 @@ class Attention:
         pickle_fn = 'src_lookup_vectors.pkl'
         print('Loading source vectors as lookup parameters')
         count = 0
-        frozen_params = {}
+        frozen_params = defaultdict(lambda: False)
 
         if not os.path.exists(pickle_fn):
             init_array = np.zeros((self.src_vocab_size, self.embed_size))
