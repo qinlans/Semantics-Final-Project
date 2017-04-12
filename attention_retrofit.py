@@ -12,7 +12,7 @@ LOAD_MODEL = False
 TRAIN = True
 OLAF = True
 
-DEV = True
+DEV = False
 DEV_LIMIT = 100
 
 DUMP_VECTORS = True
