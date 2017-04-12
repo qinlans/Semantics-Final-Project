@@ -5,7 +5,7 @@ import random
 import sys
 import os
 import pickle
-trans_out_dir = "./output/"
+trans_out_dir = "./frozen_output/"
 
 LOAD_MODEL = False 
 TRAIN = True
