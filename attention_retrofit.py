@@ -10,16 +10,21 @@ trans_out_dir = './output/'
 
 LOAD_MODEL = False 
 TRAIN = True
-OLAF = True
+OLAF = False
+
+DEV = True
+DEV_LIMIT = 100
 
 def read_file(filename):
   dataset = []
   with open(filename, 'r') as f:
-    for line in f:
+    for i, line in enumerate(f):
       sent = line.strip().split(' ')
       sent.append('</S>')
       sent = ['<S>'] + sent
       dataset.append(sent)
+      if DEV and i > DEV_LIMIT:
+          break
   return dataset
 
 
@@ -288,6 +293,15 @@ class Attention:
         c_t = h_senses * alignment
         return c_t
 
+    def __sense_attention_mlp_alignment(self, h_senses, h_m):
+        W1_att_senses = dy.parameter(self.W1_att_senses)
+        W1_att_m = dy.parameter(self.W1_att_m)
+        w2_att_s = dy.parameter(self.w2_att_s)
+        a_t = dy.transpose(dy.tanh(dy.colwise_add(W1_att_senses * h_senses, W1_att_m * h_m))) * w2_att_s
+        alignment = dy.softmax(a_t)
+        c_t = h_senses * alignment
+        return c_t, alignment
+
     # Calculates the context vector for words using a MLP
     def __word_attention_mlp(self, h_fs_matrix, h_e, fixed_attentional_component):
         W1_att_e = dy.parameter(self.W1_att_e)
@@ -390,9 +404,11 @@ class Attention:
             cw_senses = [self.lookup_frozen(self.src_lookup, sense_id) for sense_id in cw_sense_ids]
             h_senses = dy.concatenate_cols(cw_senses)
             h_m = sense_state.output()
-            c_t_sense = self.__sense_attention_mlp(h_senses, h_m)
+            c_t_sense, alignment = self.__sense_attention_mlp_alignment(h_senses, h_m)
             sense_state = sense_state.add_input(dy.concatenate([c_t_sense, dy.tanh(c_t_sense)]))
             attended.append(c_t_sense)
+
+
 
         attended_rev = list(reversed(attended))
 
