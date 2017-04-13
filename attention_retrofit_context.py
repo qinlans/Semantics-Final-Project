@@ -6,7 +6,7 @@ import re
 import sys
 import pickle
 import os
-trans_out_dir = './frozen_output/'
+trans_out_dir = './context_output/'
 
 LOAD_MODEL = False 
 TRAIN = True
