@@ -12,16 +12,37 @@ LOAD_MODEL = False
 TRAIN = True
 OLAF = False
 
+DEV = False
+DEV_LIMIT = 100
+
+DUMP_VECTORS = True
+
 def read_file(filename):
   dataset = []
   with open(filename, 'r') as f:
-    for line in f:
+    for i, line in enumerate(f):
       sent = line.strip().split(' ')
       sent.append('</S>')
       sent = ['<S>'] + sent
       dataset.append(sent)
+      if DEV and i > DEV_LIMIT:
+          break
   return dataset
 
+def read_file_sense(filename):
+  dataset = []
+  with open(filename, 'r') as f:
+    for i, l in enumerate(f):
+      sense_split = l.split("\t")
+      word_index = int(sense_split[0])
+      sent_string = sense_split[1]
+      sent = sent_string.strip().split(' ')
+      sent.append('</S>')
+      sent = ['<S>'] + sent
+      dataset.append((sent, word_index))
+      if DEV and i > DEV_LIMIT:
+          break
+  return dataset
 
 def build_dicts(corpus, unk_threshold=1, vector_word_list=None):
     word_counts = defaultdict(lambda: 0)
@@ -124,12 +145,13 @@ class Attention:
         self.sense_attention_size = sense_attention_size
         self.max_len = max_len
 
+        self.wid_to_sensestr = None
         if src_vectors_file is not None:
-            self.frozen_params = self.load_src_lookup_params(src_vectors_file, model)
+            self.frozen_params, self.wid_to_sensestr = self.load_src_lookup_params(src_vectors_file, model)
             if not frozen_vectors:
                 self.frozen_params = defaultdict(lambda: False)
         else:
-            self.src_lookup = model.add_lookup_parameters((self.src_sense_vocab_size, self.embed_size))
+            self.src_lookup = model.add_lookup_parameters((self.src_vocab_size, self.embed_size))
             self.frozen_params = defaultdict(lambda: False)
 
         self.tgt_lookup = model.add_lookup_parameters((self.tgt_vocab_size, self.embed_size))
@@ -189,7 +211,7 @@ class Attention:
 
     def load_src_lookup_params_only_vectors(self, src_vectors_file, model):
         print('Loading source vectors as lookup parameters')
-        init_array = np.zeros((self.src_sense_vocab_size, self.embed_size))
+        init_array = np.zeros((self.src_vocab_size, self.embed_size))
         count = 0
         with open(src_vectors_file) as vector_file:
             first_line = True
@@ -210,22 +232,26 @@ class Attention:
                         print('Error:{0}, {1}'.format(e, l))
 
 
-        print('Set: {0} vectors out of vocab size: {1}'.format(count, self.src_sense_vocab_size))
-        self.src_lookup = model.add_lookup_parameters((self.src_sense_vocab_size, self.embed_size))
+        print('Set: {0} vectors out of vocab size: {1}'.format(count, self.src_vocab_size))
+        self.src_lookup = model.add_lookup_parameters((self.src_vocab_size, self.embed_size))
 
         self.src_lookup.init_from_array(init_array)
 
     def load_src_lookup_params(self, src_vectors_file, model):
-        self.src_lookup = model.add_lookup_parameters((self.src_sense_vocab_size, self.embed_size))
+        self.src_lookup = model.add_lookup_parameters((self.src_vocab_size, self.embed_size))
 
-        pickle_fn = 'src_lookup_vectors_retro_context.pkl'
+        pickle_fn = 'src_lookup_vectors_retro.pkl'
+        pickle_wid_fn = 'src_lookup_vectors_retro_wid.pkl'
+
         print('Loading source vectors as lookup parameters')
         count = 0
 
         frozen_params = defaultdict(lambda: False)
 
-        if not os.path.exists(pickle_fn):
-            init_array = np.zeros((self.src_sense_vocab_size, self.embed_size))
+        wid_to_sensestr = {}
+
+        if not os.path.exists(pickle_fn) or not os.path.exists(pickle_wid_fn):
+            init_array = np.zeros((self.src_vocab_size, self.embed_size))
 
             with open(src_vectors_file) as vector_file:
                 first_line = True
@@ -239,42 +265,53 @@ class Attention:
                             sense = space_delim[0].split('|')[1].strip(':')
                             w_id = int(self.src_token_sense_to_id[(word, sense)])
                             if w_id != 0:
+                                wid_to_sensestr[w_id] = space_delim[0]
+
                                 init_array[w_id, :] = np.asarray(space_delim[1:])
                                 count += 1
                                 frozen_params[w_id] = True
 
                         except Exception as e:
                             print('Error:{0}, {1}'.format(e, l))
-            with open(pickle_fn, 'wb') as pickle_file:
+            with open(pickle_fn, 'wb') as pickle_file, open(pickle_wid_fn, 'wb') as pickle_wid_file:
                 pickle.dump(init_array, pickle_file)
-            for i in range(self.src_sense_vocab_size):
+                pickle.dump(wid_to_sensestr, pickle_wid_file)
+            for i in range(self.src_vocab_size):
                 if not np.any(init_array[i, :]):
                     expr = dy.lookup(self.src_lookup, i)
                     init_array[i, :] = expr.npvalue()
+                    wid_to_sensestr[i] = self.src_id_to_token[i][0]
+
                     frozen_params[i] = False
 
         else:
-            with open(pickle_fn, 'rb') as pickle_file:
+            with open(pickle_fn, 'rb') as pickle_file, open(pickle_wid_fn, 'rb') as pickle_wid_file:
                 init_array = pickle.load(pickle_file)
-
-            for i in range(self.src_sense_vocab_size):
+                wid_to_sensestr = pickle.load(pickle_wid_file)
+            for i in range(self.src_vocab_size):
                 if not np.any(init_array[i, :]):
                     expr = dy.lookup(self.src_lookup, i)
                     init_array[i, :] = expr.npvalue()
                     frozen_params[i] = False
+                    wid_to_sensestr[i] = self.src_id_to_token[i][0]
+
                 else:
                     frozen_params[i] = True
+                    wid_to_sensestr[i] = self.src_id_to_token[i][0]
+
 
                     count += 1
 
-        print('Set: {0} vectors out of vocab size: {1}'.format(count, self.src_sense_vocab_size))
+        print('Set: {0} vectors out of vocab size: {1}'.format(count, self.src_vocab_size))
 
         self.src_lookup.init_from_array(init_array)
 
-        return frozen_params
+        return frozen_params, wid_to_sensestr
+
 
     def save_model(self):
-        self.model.save(self.model_name)
+        if not DEV:
+            self.model.save(self.model_name)
 
     def load_model(self):
         self.model.load(self.model_name)
@@ -288,6 +325,16 @@ class Attention:
         alignment = dy.softmax(a_t)
         c_t = h_senses * alignment
         return c_t
+
+    def __sense_attention_mlp_alignment(self, h_senses, h_m):
+        W1_att_senses = dy.parameter(self.W1_att_senses)
+        W1_att_m = dy.parameter(self.W1_att_m)
+        w2_att_s = dy.parameter(self.w2_att_s)
+        a_t = dy.transpose(dy.tanh(dy.colwise_add(W1_att_senses * h_senses, W1_att_m * h_m))) * w2_att_s
+        alignment = dy.softmax(a_t)
+        c_t = h_senses * alignment
+        return c_t, alignment
+
 
     # Calculates the context vector for words using a MLP
     def __word_attention_mlp(self, h_fs_matrix, h_e, fixed_attentional_component):
@@ -474,6 +521,105 @@ class Attention:
 
         return ' '.join(trans_sentence[1:])
 
+    def translate_sentence_sense(self, sent_sense, sense_save=False):
+        dy.renew_cg()
+
+        sense_return = None
+
+        sent = sent_sense[0]
+
+
+        W_s = dy.parameter(self.W_s)
+        b_s = dy.parameter(self.b_s)
+        W_y = dy.parameter(self.W_y)
+        b_y = dy.parameter(self.b_y)
+        W_m = dy.parameter(self.W_m)
+        b_m = dy.parameter(self.b_m)
+        W1_att_f = dy.parameter(self.W1_att_f)
+        w2_att = dy.parameter(self.w2_att)
+
+        sent_rev = list(reversed(sent))
+
+        l2r_surface_context = []
+        r2l_surface_context = []
+        l2r_surface_context_state = self.l2r_surface_context_builder.initial_state()
+        r2l_surface_context_state = self.r2l_surface_context_builder.initial_state()
+        for (cw_l2r, cw_r2l) in zip(sent, sent_rev):
+            l2r_surface_context_state = l2r_surface_context_state.add_input(
+                dy.lookup(self.context_lookup, self.src_word_to_id[cw_l2r]))
+            r2l_surface_context_state = r2l_surface_context_state.add_input(
+                dy.lookup(self.context_lookup, self.src_word_to_id[cw_r2l]))
+            l2r_surface_context.append(l2r_surface_context_state.output())
+            r2l_surface_context.append(r2l_surface_context_state.output())
+        r2l_surface_context.reverse()
+
+        surface_contexts = []
+        for (l2r_i, r2l_i) in zip(l2r_surface_context, r2l_surface_context):
+            surface_contexts.append(l2r_i + r2l_i)
+
+        # Sense-level attention
+        attended = []
+        c_t_sense = dy.vecInput(self.embed_size)
+        sense_start = surface_contexts[-1]
+        sense_state = self.sense_builder.initial_state().set_s([sense_start, dy.tanh(sense_start)])
+        for i, cw in enumerate(sent):
+            sense_state = sense_state.add_input(dy.concatenate([surface_contexts[i], c_t_sense]))
+            h_m = sense_state.output()
+            cw_sense_ids = self.src_token_to_ids[cw]
+            cw_senses = [self.lookup_frozen(self.src_lookup, sense_id) for sense_id in cw_sense_ids]
+            h_senses = dy.concatenate_cols(cw_senses)
+            c_t_sense, alignment = self.__sense_attention_mlp_alignment(h_senses, h_m)
+            attended.append(c_t_sense)
+
+            if i == sent_sense[1]:
+                alignment_np = alignment.npvalue()
+                sense_strs = [self.wid_to_sensestr[s] for s in cw_sense_ids]
+                sense_return = (sense_strs, alignment_np)
+
+
+        attended_rev = list(reversed(attended))
+
+        # Bidirectional representations
+        l2r_state = self.l2r_builder.initial_state()
+        r2l_state = self.r2l_builder.initial_state()
+        l2r_contexts = []
+        r2l_contexts = []
+        for (cw_l2r, cw_r2l) in zip(attended, attended_rev):
+            l2r_state = l2r_state.add_input(cw_l2r)
+            r2l_state = r2l_state.add_input(cw_r2l)
+            l2r_contexts.append(l2r_state.output())
+            r2l_contexts.append(r2l_state.output())
+        r2l_contexts.reverse()
+
+        h_fs = []
+        for (l2r_i, r2l_i) in zip(l2r_contexts, r2l_contexts):
+            h_fs.append(dy.concatenate([l2r_i, r2l_i]))
+        h_fs_matrix = dy.concatenate_cols(h_fs)
+        fixed_attentional_component = W1_att_f * h_fs_matrix
+
+        # Decoder
+        trans_sentence = ['<S>']
+        cw = trans_sentence[-1]
+        c_t = dy.vecInput(self.hidden_size * 2)
+        start_state = dy.affine_transform([b_s, W_s, h_fs[-1]])
+        dec_state = self.word_dec_builder.initial_state().set_s([start_state, dy.tanh(start_state)])
+        while len(trans_sentence) < self.max_len:
+            embed_t = dy.lookup(self.tgt_lookup, self.tgt_token_to_id[cw])
+            x_t = dy.concatenate([embed_t, c_t])
+            dec_state = dec_state.add_input(x_t)
+            h_e = dec_state.output()
+            c_t = self.__word_attention_mlp(h_fs_matrix, h_e, fixed_attentional_component)
+            m_t = dy.tanh(dy.affine_transform([b_m, W_m, dy.concatenate([h_e, c_t])]))
+            y_star = dy.affine_transform([b_y, W_y, m_t])
+            p = dy.softmax(y_star)
+            cw = self.tgt_id_to_token[np.argmax(p.vec_value())]
+            if cw == '</S>':
+                break
+            trans_sentence.append(cw)
+
+        return ' '.join(trans_sentence[1:]), sense_return
+
+
     def __step_batch(self, batch):
         dy.renew_cg()
 
@@ -636,7 +782,7 @@ class Attention:
                         self.translate(test, output_prefix + str(counter))
                         counter += 1
 
-    def train_batch(self, dev, trainer, test, train_output=False, output_prefix='translated_test'):
+    def train_batch(self, dev, trainer, test, train_output=False, output_prefix='translated_test', test_sense_src = None):
         self.training.sort(key=lambda t: len(t[0]), reverse=True)
         dev.sort(key=lambda t: len(t[0]), reverse=True)
         training_order = create_batches(self.training, self.max_batch_size) 
@@ -681,12 +827,43 @@ class Attention:
                         self.translate(test, output_prefix + str(counter))
                         counter += 1
 
-    def translate(self, src, output_filename):
-        outfile = open(trans_out_dir + output_filename, 'wb')
-        for sent in src:
-            trans_sent = self.translate_sentence(sent)
-            outfile.write('%s\n' % trans_sent)
- 
+                    if test_sense_src is not None:
+                        self.translate(test, output_prefix + str(counter), test_sense_src)
+
+
+
+    def dump_vectors(self, output_filename):
+        sense_vectors = {}
+
+        for tok in self.src_token_to_id:
+            wid_list = self.src_token_to_id[tok]
+            if len(wid_list) > 1:
+                for wid in wid_list:
+                    sense_str = self.wid_to_sensestr[wid]
+                    sense_vect = dy.lookup(self.src_lookup, wid).npvalue()
+                    sense_vectors[sense_str] = sense_vect
+
+        with open(os.path.join(trans_out_dir, output_filename + "_vector.pkl"), "wb") as vector_pkl:
+            pickle.dump(sense_vectors, vector_pkl)
+
+    def translate(self, src, output_filename, test_sense_src=None):
+        outfile = open(trans_out_dir + output_filename, 'w')
+        if test_sense_src is None:
+            for sent in src:
+                trans_sent = self.translate_sentence(sent)
+                outfile.write('%s\n' % trans_sent)
+        else:
+            sense_info_list = []
+            for sent in test_sense_src:
+                trans_sent, sense_info = self.translate_sentence_sense(sent, sense_save=True)
+                sense_info_list.append(sense_info)
+                outfile.write('%s\n' % trans_sent)
+            with open(os.path.join(trans_out_dir,output_filename+"_sense.pkl"), "wb") as sense_pkl:
+                pickle.dump(sense_info_list, sense_pkl)
+
+        if DUMP_VECTORS:
+            self.dump_vectors(output_filename )
+
 def main():
 
     model = dy.Model()
@@ -701,6 +878,10 @@ def main():
     src_vector_file = None
     if len(sys.argv) > 6:
         src_vector_file = sys.argv[7]
+    test_sense_src = None
+    if len(sys.argv) > 7 and not sys.argv[8].startswith("--"):
+        test_sense_src = read_file_sense(sys.argv[8])
+
     dev = [(x, y) for (x, y) in zip(dev_src, dev_tgt)]
 
     if OLAF:
@@ -708,15 +889,19 @@ def main():
     else:
         print("The vectors are not frozen and olaf is melting!")
 
+    if DEV:
+        print("In DEV mode, limiting each corpus to {0} sentences".format(DEV_LIMIT))
+
+
     attention = Attention(model, training_src, training_tgt, model_name,
         src_vectors_file=src_vector_file, frozen_vectors=OLAF)
 
-    out_language = sys.argv[1].split('.')[1]
+    out_language = sys.argv[1].split('.')[-1]
 
     if LOAD_MODEL:
         attention.load_model()
     if TRAIN:
-        attention.train_batch(dev, trainer, test_src, True, 'test.' + out_language)
+        attention.train_batch(dev, trainer, test_src, True, 'test.' + out_language, test_sense_src)
 
     attention.translate(test_src, 'test.' + out_language)
 
