@@ -297,7 +297,7 @@ class Attention:
 
                 else:
                     frozen_params[i] = True
-                    wid_to_sensestr[i] = self.src_id_to_token[i][0]
+                    #wid_to_sensestr[i] = self.src_id_to_token[i][0]
 
 
                     count += 1
