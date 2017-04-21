@@ -129,7 +129,7 @@ class Attention:
 
         vector_word_list = self.load_src_words(src_vectors_file)
         print ('Building dictionaries for converting from ids to tokens and vice versa')
-        self.src_token_to_ids, self.src_id_to_token, self.src_token_sense_to_id = build_dicts(training_src, unk_threshold, vector_word_list)
+        self.src_token_to_idss, self.src_id_to_token, self.src_token_sense_to_id = build_dicts(training_src, unk_threshold, vector_word_list)
         self.src_sense_vocab_size = len(self.src_id_to_token)
         self.src_word_to_id, _, _ = build_dicts(training_src, unk_threshold)
         self.src_word_vocab_size = len(self.src_word_to_id) 
@@ -387,7 +387,7 @@ class Attention:
         for i, cw in enumerate(src_sent):
             sense_state = sense_state.add_input(dy.concatenate([surface_contexts[i], c_t_sense]))
             h_m = sense_state.output()
-            cw_sense_ids = self.src_token_to_ids[cw]
+            cw_sense_ids = self.src_token_to_idss[cw]
             cw_senses = [self.lookup_frozen(self.src_lookup, sense_id) for sense_id in cw_sense_ids]
             h_senses = dy.concatenate_cols(cw_senses)
             c_t_sense = self.__sense_attention_mlp(h_senses, h_m)
@@ -473,7 +473,7 @@ class Attention:
         for i, cw in enumerate(sent):
             sense_state = sense_state.add_input(dy.concatenate([surface_contexts[i], c_t_sense]))
             h_m = sense_state.output()
-            cw_sense_ids = self.src_token_to_ids[cw]
+            cw_sense_ids = self.src_token_to_idss[cw]
             cw_senses = [self.lookup_frozen(self.src_lookup, sense_id) for sense_id in cw_sense_ids]
             h_senses = dy.concatenate_cols(cw_senses)
             c_t_sense = self.__sense_attention_mlp(h_senses, h_m)
@@ -565,7 +565,7 @@ class Attention:
         for i, cw in enumerate(sent):
             sense_state = sense_state.add_input(dy.concatenate([surface_contexts[i], c_t_sense]))
             h_m = sense_state.output()
-            cw_sense_ids = self.src_token_to_ids[cw]
+            cw_sense_ids = self.src_token_to_idss[cw]
             cw_senses = [self.lookup_frozen(self.src_lookup, sense_id) for sense_id in cw_sense_ids]
             h_senses = dy.concatenate_cols(cw_senses)
             c_t_sense, alignment = self.__sense_attention_mlp_alignment(h_senses, h_m)
@@ -673,7 +673,7 @@ class Attention:
         for i in range(max_src_len):
             h_senses_batch = []
             for j, sent in enumerate(src_batch):
-                cw_sense_ids = self.src_token_to_ids[src_batch[j][i]]
+                cw_sense_ids = self.src_token_to_idss[src_batch[j][i]]
                 cw_senses = [self.lookup_frozen(self.src_lookup, sense_id) for sense_id in cw_sense_ids]
                 h_senses = dy.concatenate_cols(cw_senses)
                 h_senses_batch.append(h_senses)
@@ -835,8 +835,8 @@ class Attention:
     def dump_vectors(self, output_filename):
         sense_vectors = {}
 
-        for tok in self.src_token_to_id:
-            wid_list = self.src_token_to_id[tok]
+        for tok in self.src_token_to_ids:
+            wid_list = self.src_token_to_ids[tok]
             if len(wid_list) > 1:
                 for wid in wid_list:
                     sense_str = self.wid_to_sensestr[wid]
