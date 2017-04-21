@@ -8,8 +8,8 @@ import pickle
 import os
 trans_out_dir = './context_output/'
 
-LOAD_MODEL = False 
-TRAIN = True
+LOAD_MODEL = True 
+TRAIN = False
 OLAF = False
 
 DEV = False
@@ -151,7 +151,7 @@ class Attention:
             if not frozen_vectors:
                 self.frozen_params = defaultdict(lambda: False)
         else:
-            self.src_lookup = model.add_lookup_parameters((self.src_vocab_size, self.embed_size))
+            self.src_lookup = model.add_lookup_parameters((self.src_sense_vocab_size, self.embed_size))
             self.frozen_params = defaultdict(lambda: False)
 
         self.tgt_lookup = model.add_lookup_parameters((self.tgt_vocab_size, self.embed_size))
@@ -211,7 +211,7 @@ class Attention:
 
     def load_src_lookup_params_only_vectors(self, src_vectors_file, model):
         print('Loading source vectors as lookup parameters')
-        init_array = np.zeros((self.src_vocab_size, self.embed_size))
+        init_array = np.zeros((self.src_sense_vocab_size, self.embed_size))
         count = 0
         with open(src_vectors_file) as vector_file:
             first_line = True
@@ -232,13 +232,13 @@ class Attention:
                         print('Error:{0}, {1}'.format(e, l))
 
 
-        print('Set: {0} vectors out of vocab size: {1}'.format(count, self.src_vocab_size))
-        self.src_lookup = model.add_lookup_parameters((self.src_vocab_size, self.embed_size))
+        print('Set: {0} vectors out of vocab size: {1}'.format(count, self.src_sense_vocab_size))
+        self.src_lookup = model.add_lookup_parameters((self.src_sense_vocab_size, self.embed_size))
 
         self.src_lookup.init_from_array(init_array)
 
     def load_src_lookup_params(self, src_vectors_file, model):
-        self.src_lookup = model.add_lookup_parameters((self.src_vocab_size, self.embed_size))
+        self.src_lookup = model.add_lookup_parameters((self.src_sense_vocab_size, self.embed_size))
 
         pickle_fn = 'src_lookup_vectors_retro.pkl'
         pickle_wid_fn = 'src_lookup_vectors_retro_wid.pkl'
@@ -251,7 +251,7 @@ class Attention:
         wid_to_sensestr = {}
 
         if not os.path.exists(pickle_fn) or not os.path.exists(pickle_wid_fn):
-            init_array = np.zeros((self.src_vocab_size, self.embed_size))
+            init_array = np.zeros((self.src_sense_vocab_size, self.embed_size))
 
             with open(src_vectors_file) as vector_file:
                 first_line = True
@@ -276,7 +276,7 @@ class Attention:
             with open(pickle_fn, 'wb') as pickle_file, open(pickle_wid_fn, 'wb') as pickle_wid_file:
                 pickle.dump(init_array, pickle_file)
                 pickle.dump(wid_to_sensestr, pickle_wid_file)
-            for i in range(self.src_vocab_size):
+            for i in range(self.src_sense_vocab_size):
                 if not np.any(init_array[i, :]):
                     expr = dy.lookup(self.src_lookup, i)
                     init_array[i, :] = expr.npvalue()
@@ -288,7 +288,7 @@ class Attention:
             with open(pickle_fn, 'rb') as pickle_file, open(pickle_wid_fn, 'rb') as pickle_wid_file:
                 init_array = pickle.load(pickle_file)
                 wid_to_sensestr = pickle.load(pickle_wid_file)
-            for i in range(self.src_vocab_size):
+            for i in range(self.src_sense_vocab_size):
                 if not np.any(init_array[i, :]):
                     expr = dy.lookup(self.src_lookup, i)
                     init_array[i, :] = expr.npvalue()
@@ -302,7 +302,7 @@ class Attention:
 
                     count += 1
 
-        print('Set: {0} vectors out of vocab size: {1}'.format(count, self.src_vocab_size))
+        print('Set: {0} vectors out of vocab size: {1}'.format(count, self.src_sense_vocab_size))
 
         self.src_lookup.init_from_array(init_array)
 
