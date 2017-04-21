@@ -748,8 +748,7 @@ class Attention:
                         counter += 1
                     if test_sense_src is not None:
                         self.translate(test, output_prefix + str(counter), test_sense_src)
-                    if DUMP_VECTORS:
-                        self.dump_vectors(output_prefix + str(counter))
+
 
 
     def dump_vectors(self, output_filename):
@@ -780,6 +779,10 @@ class Attention:
                 outfile.write('%s\n' % trans_sent)
             with open(os.path.join(trans_out_dir,output_filename+"_sense.pkl"), "wb") as sense_pkl:
                 pickle.dump(sense_info_list, sense_pkl)
+
+        if DUMP_VECTORS:
+            self.dump_vectors(output_filename )
+
  
 def main():
 
